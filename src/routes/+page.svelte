@@ -1,5 +1,6 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
+	import { base } from '$app/paths';
 
 	// Zustand für verfügbare Geräte und ausgewählte IDs
 	let videoDevices = [];
@@ -7,7 +8,7 @@
 	let selectedCam2 = '';
 	
 	// URL für das 2K Live Scoring (hier anpassbar oder fest hinterlegt)
-	let scoringUrl = 'https://www.2k-dart-software.com/'; 
+	let scoringUrl = 'https://www.2k-dart-software.com/frontend/events/5/mandant/1744'; 
 
 	// Referenzen zu den HTML Video Elementen
 	let videoElem1;
@@ -18,6 +19,13 @@
 	let leftWidth = 50; // in %
 	let isDraggingVertical = false;
 	let isDraggingHorizontal = false;
+	
+	// Iframe Settings
+	let cropTop = 0; // Pixel, die oben abgeschnitten werden sollen
+	let cropBottom = 0; // Pixel, die unten abgeschnitten werden sollen
+	let cssInjectionStatus = ''; // Statusmeldung für die UI
+	
+	// Referenzen zu den HTML Video Elementen
 
 	onMount(() => {
 		getDevices();
@@ -92,6 +100,32 @@
 		isDraggingHorizontal = false;
 	}
 
+	// Versucht, CSS in das Iframe zu injizieren
+	async function injectIframeCss() {
+		cssInjectionStatus = 'Versuche CSS zu laden...';
+		try {
+			const iframe = document.querySelector('iframe');
+			// Der Zugriff auf contentDocument wirft einen Fehler bei Cross-Origin
+			if (iframe && iframe.contentDocument) {
+				// CSS aus der Datei laden
+				const res = await fetch(`${base}/iframe.css`);
+				if (!res.ok) throw new Error('CSS file not found');
+				const css = await res.text();
+
+				const style = iframe.contentDocument.createElement('style');
+				style.textContent = css;
+				iframe.contentDocument.head.appendChild(style);
+				console.log('Custom CSS erfolgreich in Iframe geladen.');
+				cssInjectionStatus = '✅ CSS geladen';
+			} else {
+				throw new Error('Kein Zugriff auf Iframe Content (SOP)');
+			}
+		} catch (err) {
+			console.warn('Konnte CSS nicht in Iframe injizieren:', err);
+			cssInjectionStatus = '⚠️ CSS Blockiert (Browser-Sicherheit)';
+		}
+	}
+
 	// Svelte Reaktivität: Wenn sich die Auswahl ändert, Stream neu starten
 	$: if (selectedCam1 && videoElem1) startStream(selectedCam1, videoElem1);
 	$: if (selectedCam2 && videoElem2) startStream(selectedCam2, videoElem2);
@@ -151,9 +185,25 @@
 		{/if}
 		<div class="iframe-controls">
 			<label for="url">Scoring URL:</label>
-			<input type="text" bind:value={scoringUrl} placeholder="https://..." />
+			<input type="text" id="url" bind:value={scoringUrl} placeholder="https://..." />
+			
+			<label for="crop" style="margin-left: 10px;">Crop Top:</label>
+			<input type="number" id="crop" bind:value={cropTop} min="0" style="width: 50px;" />
+
+			<label for="cropBottom" style="margin-left: 10px;">Bottom:</label>
+			<input type="number" id="cropBottom" bind:value={cropBottom} min="0" style="width: 50px;" />
+			
+			<span style="margin-left: auto; font-size: 0.7rem; color: #aaa;" title="CSS Injection funktioniert nur bei gleicher Domain oder deaktivierter Sicherheit">{cssInjectionStatus}</span>
 		</div>
-		<iframe src={scoringUrl} title="Live Scoring" frameborder="0"></iframe>
+		<div class="iframe-wrapper">
+			<iframe 
+				src={scoringUrl} 
+				title="Live Scoring" 
+				frameborder="0"
+				style="margin-top: -{cropTop}px; height: calc(100% + {cropTop}px + {cropBottom}px);"
+				on:load={injectIframeCss}
+			></iframe>
+		</div>
 	</div>
 </main>
 
@@ -286,16 +336,27 @@
 	}
 	
 	.iframe-controls input {
-		flex: 1;
 		background: #222;
 		border: 1px solid #444;
 		color: white;
 		padding: 2px 5px;
 	}
+	
+	.iframe-controls input[type="text"] {
+		flex: 1;
+	}
+
+	.iframe-wrapper {
+		flex: 1;
+		overflow: hidden; /* Wichtig, damit der abgeschnittene Teil nicht sichtbar ist */
+		position: relative;
+		background: white;
+	}
 
 	iframe {
 		width: 100%;
-		flex: 1;
+		/* height wird inline gesetzt */
 		background: white; /* Dartsoftware ist meist hell */
+		border: none;
 	}
 </style>

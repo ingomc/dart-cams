@@ -1,0 +1,15 @@
+/* 
+  Dieses CSS wird in das Iframe injiziert.
+  ACHTUNG: Funktioniert nur, wenn Cross-Origin-Richtlinien es erlauben (z.B. via Extension).
+*/
+
+body *{
+    color: red !important;
+}
+
+/* Beispiel: Header ausblenden (Klassennamen müssen geprüft werden) */
+/* 
+.header, #header {
+    display: none !important;
+} 
+*/

@@ -122,7 +122,7 @@
 			}
 		} catch (err) {
 			console.warn('Konnte CSS nicht in Iframe injizieren:', err);
-			cssInjectionStatus = '⚠️ CSS Blockiert (Browser-Sicherheit)';
+			cssInjectionStatus = 'CSS Blockiert';
 		}
 	}
 
@@ -138,7 +138,7 @@
 		<!-- Kamera 1 -->
 		<div class="cam-container" style="width: {leftWidth}%;">
 			<div class="controls">
-				<label for="cam1">Kamera 1 (Board):</label>
+				<label for="cam1">Kamera 1:</label>
 				<select id="cam1" bind:value={selectedCam1}>
 					{#each videoDevices as device}
 						<option value={device.deviceId}>{device.label || 'Kamera ' + device.deviceId}</option>
@@ -158,7 +158,7 @@
 		<!-- Kamera 2 -->
 		<div class="cam-container" style="flex: 1;">
 			<div class="controls">
-				<label for="cam2">Kamera 2 (Spieler/Split):</label>
+				<label for="cam2">Kamera 2:</label>
 				<select id="cam2" bind:value={selectedCam2}>
 					{#each videoDevices as device}
 						<option value={device.deviceId}>{device.label || 'Kamera ' + device.deviceId}</option>

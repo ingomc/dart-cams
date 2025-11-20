@@ -177,11 +177,13 @@
 						<option value={device.deviceId}>{device.label || 'Kamera ' + device.deviceId}</option>
 					{/each}
 				</select>
+				<button class="settings-btn" on:click={() => openSettings('cam1')} title="Einstellungen">
+					<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+				</button>
 			</div>
 			<div class="video-wrapper">
 				<!-- svelte-ignore a11y-media-has-caption -->
 				<video bind:this={videoElem1} autoplay playsinline muted style={getTransformStyle(camSettings.cam1)}></video>
-				<button class="settings-btn" on:click={() => openSettings('cam1')} title="Kamera 1 Einstellungen">⚙️</button>
 			</div>
 		</div>
 
@@ -190,7 +192,7 @@
 		<div class="resizer-horizontal" on:mousedown={startHorizontalDrag}></div>
 
 		<!-- Kamera 2 -->
-		<div class="cam-container" style="flex: 1;">
+		<div class="cam-container" style="width: {100 - leftWidth}%;">
 			<div class="controls">
 				<label for="cam2">Kamera 2:</label>
 				<select id="cam2" bind:value={selectedCam2}>
@@ -198,11 +200,13 @@
 						<option value={device.deviceId}>{device.label || 'Kamera ' + device.deviceId}</option>
 					{/each}
 				</select>
+				<button class="settings-btn" on:click={() => openSettings('cam2')} title="Einstellungen">
+					<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+				</button>
 			</div>
 			<div class="video-wrapper">
 				<!-- svelte-ignore a11y-media-has-caption -->
 				<video bind:this={videoElem2} autoplay playsinline muted style={getTransformStyle(camSettings.cam2)}></video>
-				<button class="settings-btn" on:click={() => openSettings('cam2')} title="Kamera 2 Einstellungen">⚙️</button>
 			</div>
 		</div>
 
@@ -394,24 +398,21 @@
 	}
 
 	.settings-btn {
-		position: absolute;
-		top: 10px;
-		right: 10px;
-		background: rgba(0, 0, 0, 0.5);
+		background: none;
 		border: none;
-		color: white;
-		font-size: 1.2rem;
+		color: #aaa;
 		cursor: pointer;
-		padding: 5px;
-		border-radius: 4px;
-		z-index: 10;
-		opacity: 0.5;
-		transition: opacity 0.2s;
+		padding: 4px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-left: 5px;
 	}
 
 	.settings-btn:hover {
-		opacity: 1;
-		background: rgba(0, 0, 0, 0.8);
+		color: white;
+		background: #444;
+		border-radius: 4px;
 	}
 
 	/* --- Modal Styles --- */

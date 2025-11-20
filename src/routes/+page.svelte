@@ -33,6 +33,7 @@
 	
 	let editingCam = null; // 'cam1' oder 'cam2' oder null
 	let editVideoSource = null; // Stream für das Modal
+	let cvReady = false;
 
 	// Referenzen zu den HTML Video Elementen
 
@@ -43,6 +44,16 @@
 
 		window.addEventListener('mousemove', handleMouseMove);
 		window.addEventListener('mouseup', handleMouseUp);
+
+		// Check if OpenCV is already loaded
+		if (window.cv && window.cv.Mat) {
+			cvReady = true;
+		} else {
+			window.onOpenCvReady = () => {
+				console.log('OpenCV.js is ready');
+				cvReady = true;
+			};
+		}
 	});
 
 	onDestroy(() => {
@@ -145,6 +156,127 @@
 	function closeSettings() {
 		editingCam = null;
 		editVideoSource = null;
+	}
+
+	async function calibrateCamera(camId) {
+		if (!cvReady) {
+			alert("OpenCV lädt noch... bitte warten.");
+			return;
+		}
+		
+		const video = camId === 'cam1' ? videoElem1 : videoElem2;
+		if (!video || !video.videoWidth) {
+			alert("Video nicht bereit.");
+			return;
+		}
+
+		try {
+			const cv = window.cv;
+			const width = video.videoWidth;
+			const height = video.videoHeight;
+
+			// Canvas erstellen
+			const canvas = document.createElement('canvas');
+			canvas.width = width;
+			canvas.height = height;
+			const ctx = canvas.getContext('2d');
+			ctx.drawImage(video, 0, 0, width, height);
+
+			// OpenCV Processing
+			const src = cv.imread(canvas);
+			const gray = new cv.Mat();
+			cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+			
+			// Blur & Canny
+			cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+			const edges = new cv.Mat();
+			cv.Canny(gray, edges, 50, 150);
+
+			// Find Contours
+			const contours = new cv.MatVector();
+			const hierarchy = new cv.Mat();
+			cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+			let bestEllipse = null;
+			let maxArea = 0;
+
+			// Suche nach der größten Ellipse (Dartboard)
+			for (let i = 0; i < contours.size(); ++i) {
+				const cnt = contours.get(i);
+				if (cnt.rows < 5) continue;
+				
+				const area = cv.contourArea(cnt);
+				// Filter: Muss groß genug sein (z.B. 2% des Bildes)
+				if (area < (width * height * 0.02)) continue;
+
+				// Fit Ellipse
+				const ellipse = cv.fitEllipse(cnt);
+				
+				if (area > maxArea) {
+					maxArea = area;
+					bestEllipse = ellipse;
+				}
+			}
+
+			if (bestEllipse) {
+				const s = camSettings[camId];
+				
+				// 1. Zentrieren
+				// Verschiebung = Ziel (Mitte) - Ist (Ellipse Mitte)
+				// Wir addieren zum bestehenden Offset oder setzen neu? Neu setzen ist sicherer.
+				s.x = (width / 2) - bestEllipse.center.x;
+				s.y = (height / 2) - bestEllipse.center.y;
+
+				// 2. Skalieren
+				// Board soll ca. 85% der Höhe einnehmen
+				const maxDim = Math.max(bestEllipse.size.width, bestEllipse.size.height);
+				const targetSize = height * 0.85;
+				s.scale = targetSize / maxDim;
+
+				// 3. Perspektive korrigieren (Rund machen)
+				const minDim = Math.min(bestEllipse.size.width, bestEllipse.size.height);
+				const ratio = minDim / maxDim;
+				
+				// Winkel in Grad, um den das Board gekippt ist
+				let tilt = Math.acos(ratio) * (180 / Math.PI);
+				
+				// Reset Rotation
+				s.rotateX = 0;
+				s.rotateY = 0;
+				s.rotate = 0;
+				s.skewX = 0;
+				s.skewY = 0;
+
+				// Heuristik:
+				// Wenn Breite > Höhe -> Rotate X (Kippen nach hinten/vorne)
+				// Wenn Höhe > Breite -> Rotate Y (Kippen nach links/rechts)
+				// Wir nehmen an, dass die Kamera meistens oben/unten montiert ist -> Rotate X
+				
+				if (bestEllipse.size.width >= bestEllipse.size.height) {
+					s.rotateX = tilt; 
+					// Hinweis: Wir wissen nicht ob + oder - (oben oder unten). 
+					// Standardmäßig kippen wir "nach hinten" (positiv), was oft passt wenn Cam oben ist?
+					// Muss der User ggf. invertieren.
+				} else {
+					s.rotateY = tilt;
+				}
+				
+				// Optional: Rotate Z korrigieren anhand des Ellipsen-Winkels?
+				// Das ist oft verwirrend, da fitEllipse angle 0-180 ist.
+				// Wir lassen Rotate Z auf 0, damit der User die 20 oben ausrichten kann.
+				
+				alert(`Board erkannt und zentriert!\nTilt-Korrektur: ${Math.round(tilt)}°\n\nBitte nutze 'Rotate Z' um die 20 nach oben zu drehen.`);
+				
+			} else {
+				alert("Kein Dartboard erkannt. Bitte Licht prüfen oder manuell einstellen.");
+			}
+
+			// Cleanup
+			src.delete(); gray.delete(); edges.delete(); contours.delete(); hierarchy.delete();
+		} catch (err) {
+			console.error(err);
+			alert("Fehler bei der Erkennung: " + err.message);
+		}
 	}
 
 	function getTransformStyle(settings) {
@@ -269,6 +401,10 @@
 					</div>
 
 					<div class="controls-panel">
+						<button class="calibrate-btn" on:click={() => calibrateCamera(editingCam)} disabled={!cvReady}>
+							{cvReady ? '🪄 Auto-Calibrate (Beta)' : 'Lade OpenCV...'}
+						</button>
+						<hr />
 						<div class="control-group">
 							<label>Scale ({camSettings[editingCam].scale})</label>
 							<input type="range" min="0.5" max="3" step="0.01" bind:value={camSettings[editingCam].scale} />
@@ -532,6 +668,28 @@
 
 	.reset-btn:hover {
 		background: #b71c1c;
+	}
+
+	.calibrate-btn {
+		width: 100%;
+		padding: 10px;
+		background: #1976d2;
+		color: white;
+		border: none;
+		border-radius: 4px;
+		cursor: pointer;
+		margin-bottom: 15px;
+		font-weight: bold;
+	}
+
+	.calibrate-btn:disabled {
+		background: #555;
+		cursor: not-allowed;
+		opacity: 0.7;
+	}
+
+	.calibrate-btn:hover:not(:disabled) {
+		background: #1565c0;
 	}
 
 	/* --- Resizers --- */

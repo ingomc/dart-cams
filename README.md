@@ -1,38 +1,84 @@
-# sv
+# Dart Cams 🎯📸
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+A web-based tool designed for online dart players to easily combine webcam streams with a live scoring board in a single view. Perfect for streaming or just having a better overview during matches.
 
-## Creating a project
+## Features
 
-If you're seeing this, you've probably already done this step. Congrats!
+- **Dual Camera Support**: Select independent video sources for:
+  - **Camera 1**: Dartboard view.
+  - **Camera 2**: Player view or Split view.
+- **Live Scoring Integration**: Embeds a scoring website (default: 2K Dart Software) directly below the camera feeds.
+- **Customizable Layout**:
+  - **Vertical Resizing**: Adjust the height ratio between the camera section and the scoring board.
+  - **Horizontal Resizing**: Adjust the width ratio between the two camera feeds.
+- **Persisted Settings**: (Planned/In-progress) Remembers your selected cameras.
+- **Browser-Based**: Runs entirely in the browser using the WebRTC API. No backend required.
 
-```sh
-# create a new project in the current directory
-npx sv create
+## Tech Stack
 
-# create a new project in my-app
-npx sv create my-app
+- **Framework**: [SvelteKit](https://kit.svelte.dev/)
+- **Runtime/Package Manager**: [Bun](https://bun.sh/)
+- **Deployment**: GitHub Pages (Static Adapter)
+
+## Getting Started
+
+### Prerequisites
+
+- [Bun](https://bun.sh/) installed on your machine.
+
+### Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/your-username/dart-cams.git
+   cd dart-cams
+   ```
+
+2. Install dependencies:
+   ```bash
+   bun install
+   ```
+
+### Development
+
+Start the development server:
+
+```bash
+bun run dev
 ```
 
-## Developing
+Open your browser and navigate to `http://localhost:5173`.
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+### Building for Production
 
-```sh
-npm run dev
+To create a production build:
 
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+```bash
+bun run build
 ```
 
-## Building
+You can preview the production build with:
 
-To create a production version of your app:
-
-```sh
-npm run build
+```bash
+bun run preview
 ```
 
-You can preview the production build with `npm run preview`.
+## Deployment
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+This project is configured to deploy automatically to **GitHub Pages** via GitHub Actions.
+
+1. Push your changes to the `main` branch.
+2. Go to your repository **Settings** > **Pages**.
+3. Under **Build and deployment**, select **GitHub Actions** as the source.
+4. The included workflow `.github/workflows/deploy.yml` will handle the build and deployment.
+
+## Usage
+
+1. **Allow Camera Access**: When you first load the page, allow the browser to access your cameras.
+2. **Select Cameras**: Use the dropdown menus above each video feed to select the correct input device for your Board and Player cam.
+3. **Set Scoring URL**: Enter the URL of your match lobby or scoring board in the input field at the bottom (default is 2K Dart Software).
+4. **Adjust Layout**: Drag the gray bars between the cameras or between the cameras and the iframe to customize your view.
+
+## License
+
+MIT

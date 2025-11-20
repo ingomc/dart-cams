@@ -34,6 +34,7 @@
 	let editingCam = null; // 'cam1' oder 'cam2' oder null
 	let editVideoSource = null; // Stream für das Modal
 	let cvReady = false;
+	let debugCanvas; // Referenz zum Debug Canvas im Modal
 
 	// Referenzen zu den HTML Video Elementen
 
@@ -190,33 +191,95 @@
 			// Blur
 			cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
 
-			// Thresholding (Otsu) - oft robuster als Canny für geschlossene Formen
+			// Thresholding (Otsu)
 			const binary = new cv.Mat();
 			cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
 
 			// Find Contours
 			const contours = new cv.MatVector();
 			const hierarchy = new cv.Mat();
-			cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+			cv.findContours(binary, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
-			let bestEllipse = null;
-			let maxArea = 0;
+			let ellipses = [];
+			const minArea = width * height * 0.01; 
 
-			// Suche nach der größten Ellipse (Dartboard)
+			// Debug Drawing Setup
+			let debugCtx = null;
+			if (debugCanvas) {
+				debugCanvas.width = width;
+				debugCanvas.height = height;
+				debugCtx = debugCanvas.getContext('2d');
+				debugCtx.clearRect(0, 0, width, height);
+				debugCtx.lineWidth = 2;
+			}
+
+			// Alle potenziellen Ellipsen sammeln
 			for (let i = 0; i < contours.size(); ++i) {
 				const cnt = contours.get(i);
-				if (cnt.rows < 5) continue;
-				
 				const area = cv.contourArea(cnt);
-				// Filter: Muss groß genug sein (z.B. 0.5% des Bildes)
-				if (area < (width * height * 0.005)) continue;
-
-				// Fit Ellipse
-				const ellipse = cv.fitEllipse(cnt);
 				
-				if (area > maxArea) {
-					maxArea = area;
-					bestEllipse = ellipse;
+				if (area < minArea) continue;
+				if (cnt.rows < 5) continue;
+
+				try {
+					const ellipse = cv.fitEllipse(cnt);
+					ellipses.push({ ellipse, area });
+					
+					// Debug: Zeichne alle Kandidaten in Blau
+					if (debugCtx) {
+						debugCtx.strokeStyle = 'rgba(0, 0, 255, 0.3)';
+						debugCtx.beginPath();
+						debugCtx.ellipse(ellipse.center.x, ellipse.center.y, ellipse.size.width / 2, ellipse.size.height / 2, ellipse.angle * Math.PI / 180, 0, 2 * Math.PI);
+						debugCtx.stroke();
+					}
+				} catch(e) { }
+			}
+
+			// Sortieren nach Größe
+			ellipses.sort((a, b) => b.area - a.area);
+
+			let bestEllipse = ellipses.length > 0 ? ellipses[0].ellipse : null;
+			
+			// Ensemble Logic
+			let avgWidth = 0;
+			let avgHeight = 0;
+			let count = 0;
+
+			if (bestEllipse) {
+				const centerX = bestEllipse.center.x;
+				const centerY = bestEllipse.center.y;
+				const tolerance = bestEllipse.size.width * 0.1;
+
+				for (let item of ellipses) {
+					const e = item.ellipse;
+					const dx = Math.abs(e.center.x - centerX);
+					const dy = Math.abs(e.center.y - centerY);
+
+					if (dx < tolerance && dy < tolerance) {
+						avgWidth += e.size.width;
+						avgHeight += e.size.height;
+						count++;
+					}
+				}
+				
+				if (count > 0) {
+					bestEllipse.size.width = avgWidth / count;
+					bestEllipse.size.height = avgHeight / count;
+				}
+
+				// Debug: Zeichne das finale Ergebnis in Grün
+				if (debugCtx) {
+					debugCtx.strokeStyle = '#00ff00';
+					debugCtx.lineWidth = 4;
+					debugCtx.beginPath();
+					debugCtx.ellipse(bestEllipse.center.x, bestEllipse.center.y, bestEllipse.size.width / 2, bestEllipse.size.height / 2, bestEllipse.angle * Math.PI / 180, 0, 2 * Math.PI);
+					debugCtx.stroke();
+					
+					// Zeichne Center
+					debugCtx.fillStyle = 'red';
+					debugCtx.beginPath();
+					debugCtx.arc(bestEllipse.center.x, bestEllipse.center.y, 5, 0, 2 * Math.PI);
+					debugCtx.fill();
 				}
 			}
 
@@ -224,42 +287,52 @@
 				const s = camSettings[camId];
 				
 				// 1. Zentrieren
+				// Da wir jetzt translate() VOR rotate() machen, ist x/y einfach die Distanz in Screen-Pixeln
 				s.x = (width / 2) - bestEllipse.center.x;
 				s.y = (height / 2) - bestEllipse.center.y;
 
-				// 2. Skalieren (Master Scale)
-				// Wir nehmen die größere Dimension als Referenz, damit das Board sicher in den Screen passt
-				const maxDim = Math.max(bestEllipse.size.width, bestEllipse.size.height);
-				const targetSize = height * 0.85;
-				s.scale = targetSize / maxDim;
+				// 2. Rotation korrigieren
+				// Wir drehen das Bild so, dass die Ellipse gerade steht.
+				// OpenCV Angle ist oft der Winkel der ersten Achse.
+				// Wir probieren, es einfach "gerade" zu drehen.
+				// Wenn das Board z.B. 45 Grad gedreht ist, müssen wir -45 Grad drehen.
+				s.rotate = -bestEllipse.angle;
 
-				// 3. Aspect Ratio Korrektur (Scale X/Y)
-				// Wir wollen, dass das Board rund wird (Kreis).
-				// Wenn Breite != Höhe, müssen wir eine Achse skalieren.
+				// 3. Aspect Ratio Korrektur
+				// Jetzt wo es (hoffentlich) gerade steht, schauen wir uns Breite und Höhe an.
+				// fitEllipse liefert width/height der Achsen.
 				
-				s.scaleX = 1;
-				s.scaleY = 1;
-
-				if (bestEllipse.size.width > bestEllipse.size.height) {
-					// Board ist breiter als hoch -> Wir müssen Y strecken (oder X stauchen)
-					// Wir strecken Y, damit es rund wird.
-					s.scaleY = bestEllipse.size.width / bestEllipse.size.height;
-				} else {
-					// Board ist höher als breit -> Wir müssen X strecken
-					s.scaleX = bestEllipse.size.height / bestEllipse.size.width;
-				}
+				const axis1 = bestEllipse.size.width;
+				const axis2 = bestEllipse.size.height;
 				
-				// Reset Rotation & Skew (da wir jetzt Scaling nutzen)
+				// Wir wissen nicht sicher, welche Achse welche ist nach der Rotation (hängt von OpenCV Version ab),
+				// aber wir wollen einfach, dass BEIDE Achsen gleich lang werden (Kreis).
+				// Wir nehmen die längere Achse als Zielgröße.
+				
+				const maxAxis = Math.max(axis1, axis2);
+				const targetSize = height * 0.85; // 85% der Screen-Höhe
+				
+				// Master Scale setzt die Grundgröße
+				s.scale = targetSize / maxAxis;
+				
+				// Nun die Feinjustierung der Achsen
+				// Da wir um -angle gedreht haben, sollte axis1 jetzt X oder Y entsprechen?
+				// Das ist tricky. Wir machen es pragmatisch:
+				// Wir setzen Scale X und Y so, dass beide Achsen auf 'maxAxis' gestreckt werden.
+				
+				// Wenn wir annehmen, dass width -> X und height -> Y (im unrotierten System der Ellipse):
+				s.scaleX = maxAxis / axis1;
+				s.scaleY = maxAxis / axis2;
+				
+				// Reset 3D & Skew
 				s.rotateX = 0;
 				s.rotateY = 0;
-				s.rotate = 0; // User muss Z-Rotation (20 oben) meist selbst machen
 				s.skewX = 0;
 				s.skewY = 0;
 
-				// Svelte Reaktivität erzwingen, damit die Slider sofort springen
 				camSettings = camSettings;
 				
-				alert(`Board erkannt!\nZentriert: Ja\nAspect Ratio Korrektur: X=${s.scaleX.toFixed(2)}, Y=${s.scaleY.toFixed(2)}\n\nBitte nutze 'Rotate Z' um die 20 nach oben zu drehen.`);
+				alert(`Board erkannt!\nZentriert: Ja\nRotation: ${Math.round(s.rotate)}°\nScale X: ${s.scaleX.toFixed(2)}\nScale Y: ${s.scaleY.toFixed(2)}\n\nFalls es noch "eiert", probiere manuell Scale X/Y nachzujustieren.`);
 				
 			} else {
 				// Debug: Zeige was gesehen wurde, falls nichts erkannt wird
@@ -329,11 +402,17 @@
 		const sx = settings.scale * (settings.scaleX || 1);
 		const sy = settings.scale * (settings.scaleY || 1);
 		
+		// WICHTIG: Reihenfolge der Transformationen!
+		// 1. Translate (Verschieben im Screen-Koordinatensystem)
+		// 2. Rotate (Drehen um den neuen Mittelpunkt)
+		// 3. Scale (Skalieren der Achsen)
+		// 4. 3D Rotations (Tilt)
+		
 		return `transform: 
 			${persp}
-			scale(${sx}, ${sy}) 
-			rotate(${settings.rotate}deg) 
 			translate(${settings.x}px, ${settings.y}px)
+			rotate(${settings.rotate}deg) 
+			scale(${sx}, ${sy}) 
 			rotateX(${settings.rotateX}deg)
 			rotateY(${settings.rotateY}deg)
 			skew(${settings.skewX}deg, ${settings.skewY}deg);`;
@@ -446,6 +525,8 @@
 						></video>
 						<!-- Hilfskreis für Dartboard -->
 						<div class="guide-circle"></div>
+						<!-- Debug Canvas für OpenCV Overlay -->
+						<canvas bind:this={debugCanvas} class="debug-canvas"></canvas>
 					</div>
 
 					<div class="controls-panel">
@@ -675,6 +756,19 @@
 		width: 100%;
 		height: 100%;
 		object-fit: contain; /* Im Modal wollen wir alles sehen */
+		position: absolute;
+		top: 0;
+		left: 0;
+	}
+
+	.debug-canvas {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		z-index: 10; /* Über dem Video */
 	}
 
 	.guide-circle {

@@ -25,6 +25,15 @@
 	let cropBottom = 0; // Pixel, die unten abgeschnitten werden sollen
 	let cssInjectionStatus = ''; // Statusmeldung für die UI
 	
+	// Camera Transform Settings
+	let camSettings = {
+		cam1: { scale: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0 },
+		cam2: { scale: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0 }
+	};
+	
+	let editingCam = null; // 'cam1' oder 'cam2' oder null
+	let editVideoSource = null; // Stream für das Modal
+
 	// Referenzen zu den HTML Video Elementen
 
 	onMount(() => {
@@ -122,8 +131,32 @@
 			}
 		} catch (err) {
 			console.warn('Konnte CSS nicht in Iframe injizieren:', err);
-			cssInjectionStatus = 'CSS Blockiert';
+			cssInjectionStatus = '⚠️ CSS Blockiert (Browser-Sicherheit)';
 		}
+	}
+
+	function openSettings(camId) {
+		editingCam = camId;
+		// Wir nutzen den gleichen Stream wie im Hauptfenster
+		if (camId === 'cam1' && videoElem1) editVideoSource = videoElem1.srcObject;
+		if (camId === 'cam2' && videoElem2) editVideoSource = videoElem2.srcObject;
+	}
+
+	function closeSettings() {
+		editingCam = null;
+		editVideoSource = null;
+	}
+
+	function getTransformStyle(settings) {
+		const persp = settings.perspective > 0 ? `perspective(${settings.perspective}px)` : '';
+		return `transform: 
+			${persp}
+			scale(${settings.scale}) 
+			rotate(${settings.rotate}deg) 
+			translate(${settings.x}px, ${settings.y}px)
+			rotateX(${settings.rotateX}deg)
+			rotateY(${settings.rotateY}deg)
+			skew(${settings.skewX}deg, ${settings.skewY}deg);`;
 	}
 
 	// Svelte Reaktivität: Wenn sich die Auswahl ändert, Stream neu starten
@@ -147,7 +180,8 @@
 			</div>
 			<div class="video-wrapper">
 				<!-- svelte-ignore a11y-media-has-caption -->
-				<video bind:this={videoElem1} autoplay playsinline muted></video>
+				<video bind:this={videoElem1} autoplay playsinline muted style={getTransformStyle(camSettings.cam1)}></video>
+				<button class="settings-btn" on:click={() => openSettings('cam1')} title="Kamera 1 Einstellungen">⚙️</button>
 			</div>
 		</div>
 
@@ -167,7 +201,8 @@
 			</div>
 			<div class="video-wrapper">
 				<!-- svelte-ignore a11y-media-has-caption -->
-				<video bind:this={videoElem2} autoplay playsinline muted></video>
+				<video bind:this={videoElem2} autoplay playsinline muted style={getTransformStyle(camSettings.cam2)}></video>
+				<button class="settings-btn" on:click={() => openSettings('cam2')} title="Kamera 2 Einstellungen">⚙️</button>
 			</div>
 		</div>
 
@@ -205,6 +240,81 @@
 			></iframe>
 		</div>
 	</div>
+
+	<!-- SETTINGS MODAL -->
+	{#if editingCam}
+		<div class="modal-backdrop" on:click={closeSettings}>
+			<div class="modal-content" on:click|stopPropagation>
+				<div class="modal-header">
+					<h2>Einstellungen {editingCam === 'cam1' ? 'Kamera 1' : 'Kamera 2'}</h2>
+					<button class="close-btn" on:click={closeSettings}>&times;</button>
+				</div>
+				
+				<div class="modal-body">
+					<div class="preview-container">
+						<!-- svelte-ignore a11y-media-has-caption -->
+						<video 
+							srcObject={editVideoSource} 
+							autoplay 
+							playsinline 
+							muted 
+							style={getTransformStyle(camSettings[editingCam])}
+						></video>
+						<!-- Hilfskreis für Dartboard -->
+						<div class="guide-circle"></div>
+					</div>
+
+					<div class="controls-panel">
+						<div class="control-group">
+							<label>Scale ({camSettings[editingCam].scale})</label>
+							<input type="range" min="0.5" max="3" step="0.01" bind:value={camSettings[editingCam].scale} />
+						</div>
+						<div class="control-group">
+							<label>Rotate Z ({camSettings[editingCam].rotate}°)</label>
+							<input type="range" min="-180" max="180" step="1" bind:value={camSettings[editingCam].rotate} />
+						</div>
+						<div class="control-group">
+							<label>Move X ({camSettings[editingCam].x}px)</label>
+							<input type="range" min="-500" max="500" step="1" bind:value={camSettings[editingCam].x} />
+						</div>
+						<div class="control-group">
+							<label>Move Y ({camSettings[editingCam].y}px)</label>
+							<input type="range" min="-500" max="500" step="1" bind:value={camSettings[editingCam].y} />
+						</div>
+						
+						<hr />
+						
+						<div class="control-group">
+							<label>Perspective ({camSettings[editingCam].perspective}px)</label>
+							<input type="range" min="0" max="2000" step="10" bind:value={camSettings[editingCam].perspective} />
+							<small>(0 = aus, kleine Werte = starker 3D Effekt)</small>
+						</div>
+						<div class="control-group">
+							<label>Rotate X (Tilt Up/Down) ({camSettings[editingCam].rotateX}°)</label>
+							<input type="range" min="-80" max="80" step="1" bind:value={camSettings[editingCam].rotateX} />
+						</div>
+						<div class="control-group">
+							<label>Rotate Y (Tilt Left/Right) ({camSettings[editingCam].rotateY}°)</label>
+							<input type="range" min="-80" max="80" step="1" bind:value={camSettings[editingCam].rotateY} />
+						</div>
+						
+						<hr />
+
+						<div class="control-group">
+							<label>Skew X ({camSettings[editingCam].skewX}°)</label>
+							<input type="range" min="-60" max="60" step="1" bind:value={camSettings[editingCam].skewX} />
+						</div>
+						<div class="control-group">
+							<label>Skew Y ({camSettings[editingCam].skewY}°)</label>
+							<input type="range" min="-60" max="60" step="1" bind:value={camSettings[editingCam].skewY} />
+						</div>
+
+						<button class="reset-btn" on:click={() => camSettings[editingCam] = { scale: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0 }}>Reset</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	{/if}
 </main>
 
 <style>
@@ -273,12 +383,154 @@
 		justify-content: center;
 		align-items: center;
 		overflow: hidden;
+		position: relative; /* Für Settings Button */
 	}
 
 	video {
 		width: 100%;
 		height: 100%;
 		object-fit: cover; /* Oder 'contain', wenn du schwarze Balken willst aber alles sehen musst */
+		transform-origin: center center;
+	}
+
+	.settings-btn {
+		position: absolute;
+		top: 10px;
+		right: 10px;
+		background: rgba(0, 0, 0, 0.5);
+		border: none;
+		color: white;
+		font-size: 1.2rem;
+		cursor: pointer;
+		padding: 5px;
+		border-radius: 4px;
+		z-index: 10;
+		opacity: 0.5;
+		transition: opacity 0.2s;
+	}
+
+	.settings-btn:hover {
+		opacity: 1;
+		background: rgba(0, 0, 0, 0.8);
+	}
+
+	/* --- Modal Styles --- */
+	.modal-backdrop {
+		position: fixed;
+		top: 0;
+		left: 0;
+		width: 100vw;
+		height: 100vh;
+		background: rgba(0, 0, 0, 0.8);
+		z-index: 1000;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.modal-content {
+		background: #222;
+		width: 90vw;
+		height: 90vh;
+		border-radius: 8px;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	.modal-header {
+		padding: 10px 20px;
+		background: #333;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.modal-header h2 {
+		margin: 0;
+		font-size: 1.2rem;
+	}
+
+	.close-btn {
+		background: none;
+		border: none;
+		color: white;
+		font-size: 2rem;
+		cursor: pointer;
+	}
+
+	.modal-body {
+		flex: 1;
+		display: flex;
+		overflow: hidden;
+	}
+
+	.preview-container {
+		flex: 2;
+		background: black;
+		position: relative;
+		overflow: hidden;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.preview-container video {
+		width: 100%;
+		height: 100%;
+		object-fit: contain; /* Im Modal wollen wir alles sehen */
+	}
+
+	.guide-circle {
+		position: absolute;
+		width: 340px; /* Ungefähre Größe eines Dartboards auf dem Screen */
+		height: 340px;
+		border: 2px dashed rgba(255, 0, 0, 0.5);
+		border-radius: 50%;
+		pointer-events: none;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	.controls-panel {
+		flex: 1;
+		padding: 20px;
+		background: #2a2a2a;
+		overflow-y: auto;
+		min-width: 300px;
+		border-left: 1px solid #444;
+	}
+
+	.control-group {
+		margin-bottom: 15px;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.control-group label {
+		margin-bottom: 5px;
+		font-size: 0.9rem;
+		color: #ccc;
+	}
+
+	.control-group input[type="range"] {
+		width: 100%;
+	}
+
+	.reset-btn {
+		margin-top: 20px;
+		width: 100%;
+		padding: 10px;
+		background: #d32f2f;
+		color: white;
+		border: none;
+		border-radius: 4px;
+		cursor: pointer;
+	}
+
+	.reset-btn:hover {
+		background: #b71c1c;
 	}
 
 	/* --- Resizers --- */

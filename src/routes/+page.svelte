@@ -27,8 +27,8 @@
 	
 	// Camera Transform Settings
 	let camSettings = {
-		cam1: { scale: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0 },
-		cam2: { scale: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0 }
+		cam1: { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0 },
+		cam2: { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0 }
 	};
 	
 	let editingCam = null; // 'cam1' oder 'cam2' oder null
@@ -224,41 +224,42 @@
 				const s = camSettings[camId];
 				
 				// 1. Zentrieren
-				// Verschiebung = Ziel (Mitte) - Ist (Ellipse Mitte)
 				s.x = (width / 2) - bestEllipse.center.x;
 				s.y = (height / 2) - bestEllipse.center.y;
 
-				// 2. Skalieren
-				// Board soll ca. 85% der Höhe einnehmen
+				// 2. Skalieren (Master Scale)
+				// Wir nehmen die größere Dimension als Referenz, damit das Board sicher in den Screen passt
 				const maxDim = Math.max(bestEllipse.size.width, bestEllipse.size.height);
 				const targetSize = height * 0.85;
 				s.scale = targetSize / maxDim;
 
-				// 3. Perspektive korrigieren (Rund machen)
-				const minDim = Math.min(bestEllipse.size.width, bestEllipse.size.height);
-				const ratio = minDim / maxDim;
+				// 3. Aspect Ratio Korrektur (Scale X/Y)
+				// Wir wollen, dass das Board rund wird (Kreis).
+				// Wenn Breite != Höhe, müssen wir eine Achse skalieren.
 				
-				// Winkel in Grad, um den das Board gekippt ist
-				let tilt = Math.acos(ratio) * (180 / Math.PI);
+				s.scaleX = 1;
+				s.scaleY = 1;
+
+				if (bestEllipse.size.width > bestEllipse.size.height) {
+					// Board ist breiter als hoch -> Wir müssen Y strecken (oder X stauchen)
+					// Wir strecken Y, damit es rund wird.
+					s.scaleY = bestEllipse.size.width / bestEllipse.size.height;
+				} else {
+					// Board ist höher als breit -> Wir müssen X strecken
+					s.scaleX = bestEllipse.size.height / bestEllipse.size.width;
+				}
 				
-				// Reset Rotation
+				// Reset Rotation & Skew (da wir jetzt Scaling nutzen)
 				s.rotateX = 0;
 				s.rotateY = 0;
-				s.rotate = 0;
+				s.rotate = 0; // User muss Z-Rotation (20 oben) meist selbst machen
 				s.skewX = 0;
 				s.skewY = 0;
 
-				// Heuristik:
-				// Wenn Breite > Höhe -> Rotate X (Kippen nach hinten/vorne)
-				// Wenn Höhe > Breite -> Rotate Y (Kippen nach links/rechts)
+				// Svelte Reaktivität erzwingen, damit die Slider sofort springen
+				camSettings = camSettings;
 				
-				if (bestEllipse.size.width >= bestEllipse.size.height) {
-					s.rotateX = tilt; 
-				} else {
-					s.rotateY = tilt;
-				}
-				
-				alert(`Board erkannt und zentriert!\nTilt-Korrektur: ${Math.round(tilt)}°\n\nBitte nutze 'Rotate Z' um die 20 nach oben zu drehen.`);
+				alert(`Board erkannt!\nZentriert: Ja\nAspect Ratio Korrektur: X=${s.scaleX.toFixed(2)}, Y=${s.scaleY.toFixed(2)}\n\nBitte nutze 'Rotate Z' um die 20 nach oben zu drehen.`);
 				
 			} else {
 				// Debug: Zeige was gesehen wurde, falls nichts erkannt wird
@@ -292,14 +293,12 @@
 			ctx.fillStyle = '#222';
 			ctx.fillRect(0, 0, width, height);
 			
-			// Wir simulieren eine verzerrte Kamera-Sicht:
-			// Board ist oval (perspektivisch verzerrt) und nicht mittig
-			const boardW = 400;
-			const boardH = 300; // Gestaucht -> simuliert Kamera von oben/unten
-			const x = 100; // Links verschoben
-			const y = 200; // Unten verschoben
+			// Bild so skalieren, dass es den Canvas füllt (cover)
+			const scale = Math.max(width / img.width, height / img.height);
+			const x = (width / 2) - (img.width / 2) * scale;
+			const y = (height / 2) - (img.height / 2) * scale;
 			
-			ctx.drawImage(img, x, y, boardW, boardH);
+			ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
 			
 			// Stream erstellen
 			const stream = canvas.captureStream(30);
@@ -316,7 +315,7 @@
 				editVideoSource = stream;
 			}
 			
-			alert("Simulation geladen: Verzerrtes Dartboard (links unten). Klicke jetzt auf 'Auto-Calibrate'.");
+			alert("Simulation geladen: Testbild füllt nun den Screen. Klicke jetzt auf 'Auto-Calibrate'.");
 		};
 		
 		img.onerror = () => {
@@ -326,9 +325,13 @@
 
 	function getTransformStyle(settings) {
 		const persp = settings.perspective > 0 ? `perspective(${settings.perspective}px)` : '';
+		// Wir kombinieren den Master-Scale mit den individuellen Achsen-Scales
+		const sx = settings.scale * (settings.scaleX || 1);
+		const sy = settings.scale * (settings.scaleY || 1);
+		
 		return `transform: 
 			${persp}
-			scale(${settings.scale}) 
+			scale(${sx}, ${sy}) 
 			rotate(${settings.rotate}deg) 
 			translate(${settings.x}px, ${settings.y}px)
 			rotateX(${settings.rotateX}deg)
@@ -458,6 +461,14 @@
 							<input type="range" min="0.5" max="3" step="0.01" bind:value={camSettings[editingCam].scale} />
 						</div>
 						<div class="control-group">
+							<label>Scale X ({camSettings[editingCam].scaleX})</label>
+							<input type="range" min="0.5" max="3" step="0.01" bind:value={camSettings[editingCam].scaleX} />
+						</div>
+						<div class="control-group">
+							<label>Scale Y ({camSettings[editingCam].scaleY})</label>
+							<input type="range" min="0.5" max="3" step="0.01" bind:value={camSettings[editingCam].scaleY} />
+						</div>
+						<div class="control-group">
 							<label>Rotate Z ({camSettings[editingCam].rotate}°)</label>
 							<input type="range" min="-180" max="180" step="1" bind:value={camSettings[editingCam].rotate} />
 						</div>
@@ -497,7 +508,7 @@
 							<input type="range" min="-60" max="60" step="1" bind:value={camSettings[editingCam].skewY} />
 						</div>
 
-						<button class="reset-btn" on:click={() => camSettings[editingCam] = { scale: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0 }}>Reset</button>
+						<button class="reset-btn" on:click={() => camSettings[editingCam] = { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0 }}>Reset</button>
 					</div>
 				</div>
 			</div>

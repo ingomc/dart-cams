@@ -187,15 +187,17 @@
 			const gray = new cv.Mat();
 			cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 			
-			// Blur & Canny
+			// Blur
 			cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-			const edges = new cv.Mat();
-			cv.Canny(gray, edges, 50, 150);
+
+			// Thresholding (Otsu) - oft robuster als Canny für geschlossene Formen
+			const binary = new cv.Mat();
+			cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
 
 			// Find Contours
 			const contours = new cv.MatVector();
 			const hierarchy = new cv.Mat();
-			cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+			cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
 			let bestEllipse = null;
 			let maxArea = 0;
@@ -206,8 +208,8 @@
 				if (cnt.rows < 5) continue;
 				
 				const area = cv.contourArea(cnt);
-				// Filter: Muss groß genug sein (z.B. 2% des Bildes)
-				if (area < (width * height * 0.02)) continue;
+				// Filter: Muss groß genug sein (z.B. 0.5% des Bildes)
+				if (area < (width * height * 0.005)) continue;
 
 				// Fit Ellipse
 				const ellipse = cv.fitEllipse(cnt);
@@ -223,7 +225,6 @@
 				
 				// 1. Zentrieren
 				// Verschiebung = Ziel (Mitte) - Ist (Ellipse Mitte)
-				// Wir addieren zum bestehenden Offset oder setzen neu? Neu setzen ist sicherer.
 				s.x = (width / 2) - bestEllipse.center.x;
 				s.y = (height / 2) - bestEllipse.center.y;
 
@@ -250,33 +251,77 @@
 				// Heuristik:
 				// Wenn Breite > Höhe -> Rotate X (Kippen nach hinten/vorne)
 				// Wenn Höhe > Breite -> Rotate Y (Kippen nach links/rechts)
-				// Wir nehmen an, dass die Kamera meistens oben/unten montiert ist -> Rotate X
 				
 				if (bestEllipse.size.width >= bestEllipse.size.height) {
 					s.rotateX = tilt; 
-					// Hinweis: Wir wissen nicht ob + oder - (oben oder unten). 
-					// Standardmäßig kippen wir "nach hinten" (positiv), was oft passt wenn Cam oben ist?
-					// Muss der User ggf. invertieren.
 				} else {
 					s.rotateY = tilt;
 				}
 				
-				// Optional: Rotate Z korrigieren anhand des Ellipsen-Winkels?
-				// Das ist oft verwirrend, da fitEllipse angle 0-180 ist.
-				// Wir lassen Rotate Z auf 0, damit der User die 20 oben ausrichten kann.
-				
 				alert(`Board erkannt und zentriert!\nTilt-Korrektur: ${Math.round(tilt)}°\n\nBitte nutze 'Rotate Z' um die 20 nach oben zu drehen.`);
 				
 			} else {
-				alert("Kein Dartboard erkannt. Bitte Licht prüfen oder manuell einstellen.");
+				// Debug: Zeige was gesehen wurde, falls nichts erkannt wird
+				console.log("Keine passende Ellipse gefunden. Anzahl Konturen:", contours.size());
+				alert("Kein Dartboard erkannt. Versuche es mit besserem Licht oder Kontrast.");
 			}
 
 			// Cleanup
-			src.delete(); gray.delete(); edges.delete(); contours.delete(); hierarchy.delete();
+			src.delete(); gray.delete(); binary.delete(); contours.delete(); hierarchy.delete();
 		} catch (err) {
 			console.error(err);
 			alert("Fehler bei der Erkennung: " + err.message);
 		}
+	}
+
+	function simulateCamera(camId) {
+		const img = new Image();
+		img.crossOrigin = "Anonymous";
+		// Lokales Testbild aus dem static Ordner
+		img.src = `${base}/board-mock.jpeg`;
+		
+		img.onload = () => {
+			const width = 1280;
+			const height = 720;
+			const canvas = document.createElement('canvas');
+			canvas.width = width;
+			canvas.height = height;
+			const ctx = canvas.getContext('2d');
+			
+			// Hintergrund
+			ctx.fillStyle = '#222';
+			ctx.fillRect(0, 0, width, height);
+			
+			// Wir simulieren eine verzerrte Kamera-Sicht:
+			// Board ist oval (perspektivisch verzerrt) und nicht mittig
+			const boardW = 400;
+			const boardH = 300; // Gestaucht -> simuliert Kamera von oben/unten
+			const x = 100; // Links verschoben
+			const y = 200; // Unten verschoben
+			
+			ctx.drawImage(img, x, y, boardW, boardH);
+			
+			// Stream erstellen
+			const stream = canvas.captureStream(30);
+			
+			// Video Element updaten
+			const video = camId === 'cam1' ? videoElem1 : videoElem2;
+			if (video) {
+				video.srcObject = stream;
+				video.play();
+			}
+			
+			// Wenn wir gerade im Settings Modal sind, auch dort das Video updaten
+			if (editingCam === camId) {
+				editVideoSource = stream;
+			}
+			
+			alert("Simulation geladen: Verzerrtes Dartboard (links unten). Klicke jetzt auf 'Auto-Calibrate'.");
+		};
+		
+		img.onerror = () => {
+			alert("Konnte Testbild 'board-mock.jpeg' nicht laden.");
+		};
 	}
 
 	function getTransformStyle(settings) {
@@ -403,6 +448,9 @@
 					<div class="controls-panel">
 						<button class="calibrate-btn" on:click={() => calibrateCamera(editingCam)} disabled={!cvReady}>
 							{cvReady ? '🪄 Auto-Calibrate (Beta)' : 'Lade OpenCV...'}
+						</button>
+						<button class="simulate-btn" on:click={() => simulateCamera(editingCam)}>
+							🧪 Testbild laden
 						</button>
 						<hr />
 						<div class="control-group">
@@ -690,6 +738,23 @@
 
 	.calibrate-btn:hover:not(:disabled) {
 		background: #1565c0;
+	}
+
+	.simulate-btn {
+		width: 100%;
+		padding: 8px;
+		background: #444;
+		color: #ccc;
+		border: 1px solid #555;
+		border-radius: 4px;
+		cursor: pointer;
+		margin-bottom: 15px;
+		font-size: 0.8rem;
+	}
+
+	.simulate-btn:hover {
+		background: #555;
+		color: white;
 	}
 
 	/* --- Resizers --- */

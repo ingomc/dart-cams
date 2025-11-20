@@ -33,6 +33,7 @@
 	
 	let editingCam = null; // 'cam1' oder 'cam2' oder null
 	let editVideoSource = null; // Stream für das Modal
+	let cvReady = false;
 
 	// Referenzen zu den HTML Video Elementen
 
@@ -43,6 +44,16 @@
 
 		window.addEventListener('mousemove', handleMouseMove);
 		window.addEventListener('mouseup', handleMouseUp);
+
+		// Check if OpenCV is already loaded
+		if (window.cv && window.cv.Mat) {
+			cvReady = true;
+		} else {
+			window.onOpenCvReady = () => {
+				console.log('OpenCV.js is ready');
+				cvReady = true;
+			};
+		}
 	});
 
 	onDestroy(() => {
@@ -145,6 +156,172 @@
 	function closeSettings() {
 		editingCam = null;
 		editVideoSource = null;
+	}
+
+	async function calibrateCamera(camId) {
+		if (!cvReady) {
+			alert("OpenCV lädt noch... bitte warten.");
+			return;
+		}
+		
+		const video = camId === 'cam1' ? videoElem1 : videoElem2;
+		if (!video || !video.videoWidth) {
+			alert("Video nicht bereit.");
+			return;
+		}
+
+		try {
+			const cv = window.cv;
+			const width = video.videoWidth;
+			const height = video.videoHeight;
+
+			// Canvas erstellen
+			const canvas = document.createElement('canvas');
+			canvas.width = width;
+			canvas.height = height;
+			const ctx = canvas.getContext('2d');
+			ctx.drawImage(video, 0, 0, width, height);
+
+			// OpenCV Processing
+			const src = cv.imread(canvas);
+			const gray = new cv.Mat();
+			cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+			
+			// Blur
+			cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+
+			// Thresholding (Otsu) - oft robuster als Canny für geschlossene Formen
+			const binary = new cv.Mat();
+			cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+
+			// Find Contours
+			const contours = new cv.MatVector();
+			const hierarchy = new cv.Mat();
+			cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+			let bestEllipse = null;
+			let maxArea = 0;
+
+			// Suche nach der größten Ellipse (Dartboard)
+			for (let i = 0; i < contours.size(); ++i) {
+				const cnt = contours.get(i);
+				if (cnt.rows < 5) continue;
+				
+				const area = cv.contourArea(cnt);
+				// Filter: Muss groß genug sein (z.B. 0.5% des Bildes)
+				if (area < (width * height * 0.005)) continue;
+
+				// Fit Ellipse
+				const ellipse = cv.fitEllipse(cnt);
+				
+				if (area > maxArea) {
+					maxArea = area;
+					bestEllipse = ellipse;
+				}
+			}
+
+			if (bestEllipse) {
+				const s = camSettings[camId];
+				
+				// 1. Zentrieren
+				// Verschiebung = Ziel (Mitte) - Ist (Ellipse Mitte)
+				s.x = (width / 2) - bestEllipse.center.x;
+				s.y = (height / 2) - bestEllipse.center.y;
+
+				// 2. Skalieren
+				// Board soll ca. 85% der Höhe einnehmen
+				const maxDim = Math.max(bestEllipse.size.width, bestEllipse.size.height);
+				const targetSize = height * 0.85;
+				s.scale = targetSize / maxDim;
+
+				// 3. Perspektive korrigieren (Rund machen)
+				const minDim = Math.min(bestEllipse.size.width, bestEllipse.size.height);
+				const ratio = minDim / maxDim;
+				
+				// Winkel in Grad, um den das Board gekippt ist
+				let tilt = Math.acos(ratio) * (180 / Math.PI);
+				
+				// Reset Rotation
+				s.rotateX = 0;
+				s.rotateY = 0;
+				s.rotate = 0;
+				s.skewX = 0;
+				s.skewY = 0;
+
+				// Heuristik:
+				// Wenn Breite > Höhe -> Rotate X (Kippen nach hinten/vorne)
+				// Wenn Höhe > Breite -> Rotate Y (Kippen nach links/rechts)
+				
+				if (bestEllipse.size.width >= bestEllipse.size.height) {
+					s.rotateX = tilt; 
+				} else {
+					s.rotateY = tilt;
+				}
+				
+				alert(`Board erkannt und zentriert!\nTilt-Korrektur: ${Math.round(tilt)}°\n\nBitte nutze 'Rotate Z' um die 20 nach oben zu drehen.`);
+				
+			} else {
+				// Debug: Zeige was gesehen wurde, falls nichts erkannt wird
+				console.log("Keine passende Ellipse gefunden. Anzahl Konturen:", contours.size());
+				alert("Kein Dartboard erkannt. Versuche es mit besserem Licht oder Kontrast.");
+			}
+
+			// Cleanup
+			src.delete(); gray.delete(); binary.delete(); contours.delete(); hierarchy.delete();
+		} catch (err) {
+			console.error(err);
+			alert("Fehler bei der Erkennung: " + err.message);
+		}
+	}
+
+	function simulateCamera(camId) {
+		const img = new Image();
+		img.crossOrigin = "Anonymous";
+		// Lokales Testbild aus dem static Ordner
+		img.src = `${base}/board-mock.jpeg`;
+		
+		img.onload = () => {
+			const width = 1280;
+			const height = 720;
+			const canvas = document.createElement('canvas');
+			canvas.width = width;
+			canvas.height = height;
+			const ctx = canvas.getContext('2d');
+			
+			// Hintergrund
+			ctx.fillStyle = '#222';
+			ctx.fillRect(0, 0, width, height);
+			
+			// Wir simulieren eine verzerrte Kamera-Sicht:
+			// Board ist oval (perspektivisch verzerrt) und nicht mittig
+			const boardW = 400;
+			const boardH = 300; // Gestaucht -> simuliert Kamera von oben/unten
+			const x = 100; // Links verschoben
+			const y = 200; // Unten verschoben
+			
+			ctx.drawImage(img, x, y, boardW, boardH);
+			
+			// Stream erstellen
+			const stream = canvas.captureStream(30);
+			
+			// Video Element updaten
+			const video = camId === 'cam1' ? videoElem1 : videoElem2;
+			if (video) {
+				video.srcObject = stream;
+				video.play();
+			}
+			
+			// Wenn wir gerade im Settings Modal sind, auch dort das Video updaten
+			if (editingCam === camId) {
+				editVideoSource = stream;
+			}
+			
+			alert("Simulation geladen: Verzerrtes Dartboard (links unten). Klicke jetzt auf 'Auto-Calibrate'.");
+		};
+		
+		img.onerror = () => {
+			alert("Konnte Testbild 'board-mock.jpeg' nicht laden.");
+		};
 	}
 
 	function getTransformStyle(settings) {
@@ -269,6 +446,13 @@
 					</div>
 
 					<div class="controls-panel">
+						<button class="calibrate-btn" on:click={() => calibrateCamera(editingCam)} disabled={!cvReady}>
+							{cvReady ? '🪄 Auto-Calibrate (Beta)' : 'Lade OpenCV...'}
+						</button>
+						<button class="simulate-btn" on:click={() => simulateCamera(editingCam)}>
+							🧪 Testbild laden
+						</button>
+						<hr />
 						<div class="control-group">
 							<label>Scale ({camSettings[editingCam].scale})</label>
 							<input type="range" min="0.5" max="3" step="0.01" bind:value={camSettings[editingCam].scale} />
@@ -532,6 +716,45 @@
 
 	.reset-btn:hover {
 		background: #b71c1c;
+	}
+
+	.calibrate-btn {
+		width: 100%;
+		padding: 10px;
+		background: #1976d2;
+		color: white;
+		border: none;
+		border-radius: 4px;
+		cursor: pointer;
+		margin-bottom: 15px;
+		font-weight: bold;
+	}
+
+	.calibrate-btn:disabled {
+		background: #555;
+		cursor: not-allowed;
+		opacity: 0.7;
+	}
+
+	.calibrate-btn:hover:not(:disabled) {
+		background: #1565c0;
+	}
+
+	.simulate-btn {
+		width: 100%;
+		padding: 8px;
+		background: #444;
+		color: #ccc;
+		border: 1px solid #555;
+		border-radius: 4px;
+		cursor: pointer;
+		margin-bottom: 15px;
+		font-size: 0.8rem;
+	}
+
+	.simulate-btn:hover {
+		background: #555;
+		color: white;
 	}
 
 	/* --- Resizers --- */

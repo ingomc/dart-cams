@@ -669,7 +669,7 @@
 	video {
 		width: 100%;
 		height: 100%;
-		object-fit: cover; /* Oder 'contain', wenn du schwarze Balken willst aber alles sehen musst */
+		object-fit: contain; /* Oder 'contain', wenn du schwarze Balken willst aber alles sehen musst */
 		transform-origin: center center;
 	}
 
@@ -721,6 +721,8 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		position: relative;
+		z-index: 20;
 	}
 
 	.modal-header h2 {
@@ -790,6 +792,8 @@
 		overflow-y: auto;
 		min-width: 300px;
 		border-left: 1px solid #444;
+		position: relative;
+		z-index: 20;
 	}
 
 	.control-group {

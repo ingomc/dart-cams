@@ -25,7 +25,6 @@
 	// Iframe Settings
 	let cropTop = 0; // Pixel, die oben abgeschnitten werden sollen
 	let cropBottom = 0; // Pixel, die unten abgeschnitten werden sollen
-	let cssInjectionStatus = ''; // Statusmeldung für die UI
 	
 	// Camera Transform Settings
 	let camSettings = {
@@ -121,32 +120,6 @@
 	function handleMouseUp() {
 		isDraggingVertical = false;
 		isDraggingHorizontal = false;
-	}
-
-	// Versucht, CSS in das Iframe zu injizieren
-	async function injectIframeCss() {
-		cssInjectionStatus = 'Versuche CSS zu laden...';
-		try {
-			const iframe = document.querySelector('iframe');
-			// Der Zugriff auf contentDocument wirft einen Fehler bei Cross-Origin
-			if (iframe && iframe.contentDocument) {
-				// CSS aus der Datei laden
-				const res = await fetch(`${base}/iframe.css`);
-				if (!res.ok) throw new Error('CSS file not found');
-				const css = await res.text();
-
-				const style = iframe.contentDocument.createElement('style');
-				style.textContent = css;
-				iframe.contentDocument.head.appendChild(style);
-				console.log('Custom CSS erfolgreich in Iframe geladen.');
-				cssInjectionStatus = '✅ CSS geladen';
-			} else {
-				throw new Error('Kein Zugriff auf Iframe Content (SOP)');
-			}
-		} catch (err) {
-			console.warn('Konnte CSS nicht in Iframe injizieren:', err);
-			cssInjectionStatus = '⚠️ CSS Blockiert (Browser-Sicherheit)';
-		}
 	}
 
 	function openSettings(camId) {
@@ -502,10 +475,9 @@
 			<input type="number" id="cropBottom" bind:value={cropBottom} min="0" style="width: 50px;" />
 			
 			<button class="toggle-webcam-btn" on:click={() => showFloatingWebcam = !showFloatingWebcam} title="Zusätzliche Webcam anzeigen">
+				<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
 				{showFloatingWebcam ? 'Webcam schließen' : 'Webcam öffnen'}
 			</button>
-
-			<span style="margin-left: auto; font-size: 0.7rem; color: #aaa;" title="CSS Injection funktioniert nur bei gleicher Domain oder deaktivierter Sicherheit">{cssInjectionStatus}</span>
 		</div>
 		<div class="iframe-wrapper">
 			<iframe 
@@ -513,7 +485,6 @@
 				title="Live Scoring" 
 				frameborder="0"
 				style="margin-top: -{cropTop}px; height: calc(100% + {cropTop}px + {cropBottom}px);"
-				on:load={injectIframeCss}
 			></iframe>
 		</div>
 	</div>
@@ -969,13 +940,15 @@
 
 	.toggle-webcam-btn {
 		margin-left: 10px;
-		padding: 2px 8px;
+		padding: 4px 8px;
 		background: #444;
 		color: white;
 		border: 1px solid #555;
 		border-radius: 4px;
 		cursor: pointer;
 		font-size: 0.8rem;
+		display: flex;
+		align-items: center;
 	}
 
 	.toggle-webcam-btn:hover {

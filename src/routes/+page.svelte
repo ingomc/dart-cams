@@ -1,11 +1,13 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
 	import { base } from '$app/paths';
+	import FloatingWebcam from '$lib/FloatingWebcam.svelte';
 
 	// Zustand für verfügbare Geräte und ausgewählte IDs
 	let videoDevices = [];
 	let selectedCam1 = '';
 	let selectedCam2 = '';
+	let showFloatingWebcam = false;
 	
 	// URL für das 2K Live Scoring (hier anpassbar oder fest hinterlegt)
 	let scoringUrl = 'https://www.2k-dart-software.com/frontend/events/5/mandant/1744'; 
@@ -499,6 +501,10 @@
 			<label for="cropBottom" style="margin-left: 10px;">Bottom:</label>
 			<input type="number" id="cropBottom" bind:value={cropBottom} min="0" style="width: 50px;" />
 			
+			<button class="toggle-webcam-btn" on:click={() => showFloatingWebcam = !showFloatingWebcam} title="Zusätzliche Webcam anzeigen">
+				{showFloatingWebcam ? 'Webcam schließen' : 'Webcam öffnen'}
+			</button>
+
 			<span style="margin-left: auto; font-size: 0.7rem; color: #aaa;" title="CSS Injection funktioniert nur bei gleicher Domain oder deaktivierter Sicherheit">{cssInjectionStatus}</span>
 		</div>
 		<div class="iframe-wrapper">
@@ -623,6 +629,8 @@
 			</div>
 		</div>
 	{/if}
+
+	<FloatingWebcam bind:visible={showFloatingWebcam} {videoDevices} />
 </main>
 
 <style>
@@ -957,6 +965,21 @@
 	
 	.iframe-controls input[type="text"] {
 		flex: 1;
+	}
+
+	.toggle-webcam-btn {
+		margin-left: 10px;
+		padding: 2px 8px;
+		background: #444;
+		color: white;
+		border: 1px solid #555;
+		border-radius: 4px;
+		cursor: pointer;
+		font-size: 0.8rem;
+	}
+
+	.toggle-webcam-btn:hover {
+		background: #555;
 	}
 
 	.iframe-wrapper {

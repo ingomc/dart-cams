@@ -122,6 +122,9 @@
 </script>
 
 {#if visible}
+	{#if isDragging || isResizing}
+		<div class="drag-overlay" style="cursor: {isResizing ? 'se-resize' : 'grabbing'}"></div>
+	{/if}
 	<!-- svelte-ignore a11y-no-static-element-interactions -->
 	<div 
 		class="floating-window" 
@@ -231,5 +234,14 @@
 		height: 15px;
 		cursor: se-resize;
 		background: linear-gradient(135deg, transparent 50%, #666 50%);
+	}
+
+	.drag-overlay {
+		position: fixed;
+		top: 0;
+		left: 0;
+		width: 100vw;
+		height: 100vh;
+		z-index: 1999;
 	}
 </style>

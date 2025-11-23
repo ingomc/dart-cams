@@ -25,6 +25,7 @@
 	// Iframe Settings
 	let cropTop = 0; // Pixel, die oben abgeschnitten werden sollen
 	let cropBottom = 0; // Pixel, die unten abgeschnitten werden sollen
+	let iframeZoom = 1; // Zoom-Faktor für das Iframe
 	
 	// Camera Transform Settings
 	let camSettings = {
@@ -474,6 +475,9 @@
 			<label for="cropBottom" style="margin-left: 10px;">Bottom:</label>
 			<input type="number" id="cropBottom" bind:value={cropBottom} min="0" style="width: 50px;" />
 			
+			<label for="zoom" style="margin-left: 10px;">Zoom:</label>
+			<input type="range" id="zoom" bind:value={iframeZoom} min="0.5" max="2" step="0.1" style="width: 80px;" title="Zoom: {Math.round(iframeZoom * 100)}%" />
+
 			<button class="toggle-webcam-btn" on:click={() => showFloatingWebcam = !showFloatingWebcam} title="Zusätzliche Webcam anzeigen">
 				<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
 				{showFloatingWebcam ? 'Webcam schließen' : 'Webcam öffnen'}
@@ -484,7 +488,13 @@
 				src={scoringUrl} 
 				title="Live Scoring" 
 				frameborder="0"
-				style="margin-top: -{cropTop}px; height: calc(100% + {cropTop}px + {cropBottom}px);"
+				style="
+					margin-top: -{cropTop}px; 
+					width: {100 / iframeZoom}%;
+					height: calc((100% + {cropTop}px + {cropBottom}px) / {iframeZoom});
+					transform: scale({iframeZoom});
+					transform-origin: 0 0;
+				"
 			></iframe>
 		</div>
 	</div>

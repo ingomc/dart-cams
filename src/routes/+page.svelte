@@ -27,8 +27,8 @@
 	
 	// Camera Transform Settings
 	let camSettings = {
-		cam1: { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0 },
-		cam2: { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0 }
+		cam1: { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0, maskVisible: false, maskRadius: 45, maskFeather: 15 },
+		cam2: { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0, maskVisible: false, maskRadius: 45, maskFeather: 15 }
 	};
 	
 	let editingCam = null; // 'cam1' oder 'cam2' oder null
@@ -418,6 +418,14 @@
 			skew(${settings.skewX}deg, ${settings.skewY}deg);`;
 	}
 
+	function getMaskStyle(settings) {
+		if (!settings.maskVisible) return '';
+		const r = settings.maskRadius;
+		const f = settings.maskFeather;
+		const gradient = `radial-gradient(circle at center, black ${r}%, transparent ${r + f}%)`;
+		return `-webkit-mask-image: ${gradient}; mask-image: ${gradient};`;
+	}
+
 	// Svelte Reaktivität: Wenn sich die Auswahl ändert, Stream neu starten
 	$: if (selectedCam1 && videoElem1) startStream(selectedCam1, videoElem1);
 	$: if (selectedCam2 && videoElem2) startStream(selectedCam2, videoElem2);
@@ -440,7 +448,7 @@
 					<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
 				</button>
 			</div>
-			<div class="video-wrapper">
+			<div class="video-wrapper" style={getMaskStyle(camSettings.cam1)}>
 				<!-- svelte-ignore a11y-media-has-caption -->
 				<video bind:this={videoElem1} autoplay playsinline muted style={getTransformStyle(camSettings.cam1)}></video>
 			</div>
@@ -463,7 +471,7 @@
 					<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
 				</button>
 			</div>
-			<div class="video-wrapper">
+			<div class="video-wrapper" style={getMaskStyle(camSettings.cam2)}>
 				<!-- svelte-ignore a11y-media-has-caption -->
 				<video bind:this={videoElem2} autoplay playsinline muted style={getTransformStyle(camSettings.cam2)}></video>
 			</div>
@@ -514,7 +522,7 @@
 				</div>
 				
 				<div class="modal-body">
-					<div class="preview-container">
+					<div class="preview-container" style={getMaskStyle(camSettings[editingCam])}>
 						<!-- svelte-ignore a11y-media-has-caption -->
 						<video 
 							srcObject={editVideoSource} 
@@ -589,7 +597,27 @@
 							<input type="range" min="-60" max="60" step="1" bind:value={camSettings[editingCam].skewY} />
 						</div>
 
-						<button class="reset-btn" on:click={() => camSettings[editingCam] = { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0 }}>Reset</button>
+						<hr />
+						
+						<div class="control-group">
+							<label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+								<input type="checkbox" bind:checked={camSettings[editingCam].maskVisible} style="width: auto;" />
+								<span>Runde Maske aktivieren</span>
+							</label>
+						</div>
+						
+						{#if camSettings[editingCam].maskVisible}
+							<div class="control-group">
+								<label>Mask Radius ({camSettings[editingCam].maskRadius}%)</label>
+								<input type="range" min="10" max="100" step="1" bind:value={camSettings[editingCam].maskRadius} />
+							</div>
+							<div class="control-group">
+								<label>Mask Feather ({camSettings[editingCam].maskFeather}%)</label>
+								<input type="range" min="0" max="50" step="1" bind:value={camSettings[editingCam].maskFeather} />
+							</div>
+						{/if}
+
+						<button class="reset-btn" on:click={() => camSettings[editingCam] = { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0, maskVisible: false, maskRadius: 45, maskFeather: 15 }}>Reset</button>
 					</div>
 				</div>
 			</div>

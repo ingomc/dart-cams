@@ -145,7 +145,7 @@
 			<select bind:value={selectedDeviceId}>
 				<option value="">Kamera wählen...</option>
 				{#each videoDevices as device}
-					<option value={device.deviceId}>{device.label || 'Kamera ' + device.deviceId}</option>
+					<option value={device.deviceId}>{device.label || 'Kamera'} ({device.deviceId.slice(0, 8)}...)</option>
 				{/each}
 			</select>
 		</div>

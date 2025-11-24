@@ -1,10 +1,33 @@
-<script>
+<script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { base } from '$app/paths';
 	import FloatingWebcam from '$lib/FloatingWebcam.svelte';
 
+	interface CamSetting {
+		scale: number;
+		scaleX: number;
+		scaleY: number;
+		rotate: number;
+		x: number;
+		y: number;
+		perspective: number;
+		rotateX: number;
+		rotateY: number;
+		skewX: number;
+		skewY: number;
+		maskVisible: boolean;
+		maskRadius: number;
+		maskFeather: number;
+	}
+
+	interface CamSettings {
+		cam1: CamSetting;
+		cam2: CamSetting;
+		[key: string]: CamSetting; // Allow indexing by string
+	}
+
 	// Zustand für verfügbare Geräte und ausgewählte IDs
-	let videoDevices = [];
+	let videoDevices: MediaDeviceInfo[] = [];
 	let selectedCam1 = '';
 	let selectedCam2 = '';
 	let showFloatingWebcam = false;
@@ -13,8 +36,8 @@
 	let scoringUrl = 'https://www.2k-dart-software.com/frontend/events/5/mandant/1744'; 
 
 	// Referenzen zu den HTML Video Elementen
-	let videoElem1;
-	let videoElem2;
+	let videoElem1: HTMLVideoElement;
+	let videoElem2: HTMLVideoElement;
 
 	// Layout State
 	let topHeight = 50; // in %
@@ -28,35 +51,38 @@
 	let iframeZoom = 1; // Zoom-Faktor für das Iframe
 	
 	// Camera Transform Settings
-	let camSettings = {
-		cam1: { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0, maskVisible: false, maskRadius: 45, maskFeather: 15 },
-		cam2: { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0, maskVisible: false, maskRadius: 45, maskFeather: 15 }
+	const defaultCamSettings: CamSetting = { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0, maskVisible: false, maskRadius: 45, maskFeather: 15 };
+
+	let camSettings: CamSettings = {
+		cam1: { ...defaultCamSettings },
+		cam2: { ...defaultCamSettings }
 	};
 	
-	let editingCam = null; // 'cam1' oder 'cam2' oder null
-	let editVideoSource = null; // Stream für das Modal
-	let cvReady = false;
-	let debugCanvas; // Referenz zum Debug Canvas im Modal
+	let savedSettings: Record<string, CamSetting> = {};
+	let isLoadingSettings = { cam1: false, cam2: false };
+
+	let editingCam: 'cam1' | 'cam2' | null = null; // 'cam1' oder 'cam2' oder null
+	let editVideoSource: MediaProvider | null = null; // Stream für das Modal
 
 	// Referenzen zu den HTML Video Elementen
 
 	onMount(() => {
+		// Load saved settings from localStorage
+		const saved = localStorage.getItem('dartCamSettings');
+		if (saved) {
+			try {
+				savedSettings = JSON.parse(saved);
+			} catch (e) {
+				console.error("Failed to parse saved settings", e);
+			}
+		}
+
 		getDevices();
 		// Event Listener, falls Kameras während der Laufzeit eingesteckt werden
 		navigator.mediaDevices.ondevicechange = getDevices;
 
 		window.addEventListener('mousemove', handleMouseMove);
 		window.addEventListener('mouseup', handleMouseUp);
-
-		// Check if OpenCV is already loaded
-		if (window.cv && window.cv.Mat) {
-			cvReady = true;
-		} else {
-			window.onOpenCvReady = () => {
-				console.log('OpenCV.js is ready');
-				cvReady = true;
-			};
-		}
 	});
 
 	onDestroy(() => {
@@ -85,7 +111,7 @@
 	}
 
 	// Funktion, um den Stream zu starten
-	async function startStream(deviceId, videoElement) {
+	async function startStream(deviceId: string, videoElement: HTMLVideoElement) {
 		if (!deviceId || !videoElement) return;
 
 		try {
@@ -107,7 +133,7 @@
 		isDraggingHorizontal = true;
 	}
 
-	function handleMouseMove(e) {
+	function handleMouseMove(e: MouseEvent) {
 		if (isDraggingVertical) {
 			const h = (e.clientY / window.innerHeight) * 100;
 			if (h > 10 && h < 90) topHeight = h;
@@ -123,7 +149,7 @@
 		isDraggingHorizontal = false;
 	}
 
-	function openSettings(camId) {
+	function openSettings(camId: 'cam1' | 'cam2') {
 		editingCam = camId;
 		// Wir nutzen den gleichen Stream wie im Hauptfenster
 		if (camId === 'cam1' && videoElem1) editVideoSource = videoElem1.srcObject;
@@ -135,244 +161,7 @@
 		editVideoSource = null;
 	}
 
-	async function calibrateCamera(camId) {
-		if (!cvReady) {
-			alert("OpenCV lädt noch... bitte warten.");
-			return;
-		}
-		
-		const video = camId === 'cam1' ? videoElem1 : videoElem2;
-		if (!video || !video.videoWidth) {
-			alert("Video nicht bereit.");
-			return;
-		}
-
-		try {
-			const cv = window.cv;
-			const width = video.videoWidth;
-			const height = video.videoHeight;
-
-			// Canvas erstellen
-			const canvas = document.createElement('canvas');
-			canvas.width = width;
-			canvas.height = height;
-			const ctx = canvas.getContext('2d');
-			ctx.drawImage(video, 0, 0, width, height);
-
-			// OpenCV Processing
-			const src = cv.imread(canvas);
-			const gray = new cv.Mat();
-			cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-			
-			// Blur
-			cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-
-			// Thresholding (Otsu)
-			const binary = new cv.Mat();
-			cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-
-			// Find Contours
-			const contours = new cv.MatVector();
-			const hierarchy = new cv.Mat();
-			cv.findContours(binary, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-
-			let ellipses = [];
-			const minArea = width * height * 0.01; 
-
-			// Debug Drawing Setup
-			let debugCtx = null;
-			if (debugCanvas) {
-				debugCanvas.width = width;
-				debugCanvas.height = height;
-				debugCtx = debugCanvas.getContext('2d');
-				debugCtx.clearRect(0, 0, width, height);
-				debugCtx.lineWidth = 2;
-			}
-
-			// Alle potenziellen Ellipsen sammeln
-			for (let i = 0; i < contours.size(); ++i) {
-				const cnt = contours.get(i);
-				const area = cv.contourArea(cnt);
-				
-				if (area < minArea) continue;
-				if (cnt.rows < 5) continue;
-
-				try {
-					const ellipse = cv.fitEllipse(cnt);
-					ellipses.push({ ellipse, area });
-					
-					// Debug: Zeichne alle Kandidaten in Blau
-					if (debugCtx) {
-						debugCtx.strokeStyle = 'rgba(0, 0, 255, 0.3)';
-						debugCtx.beginPath();
-						debugCtx.ellipse(ellipse.center.x, ellipse.center.y, ellipse.size.width / 2, ellipse.size.height / 2, ellipse.angle * Math.PI / 180, 0, 2 * Math.PI);
-						debugCtx.stroke();
-					}
-				} catch(e) { }
-			}
-
-			// Sortieren nach Größe
-			ellipses.sort((a, b) => b.area - a.area);
-
-			let bestEllipse = ellipses.length > 0 ? ellipses[0].ellipse : null;
-			
-			// Ensemble Logic
-			let avgWidth = 0;
-			let avgHeight = 0;
-			let count = 0;
-
-			if (bestEllipse) {
-				const centerX = bestEllipse.center.x;
-				const centerY = bestEllipse.center.y;
-				const tolerance = bestEllipse.size.width * 0.1;
-
-				for (let item of ellipses) {
-					const e = item.ellipse;
-					const dx = Math.abs(e.center.x - centerX);
-					const dy = Math.abs(e.center.y - centerY);
-
-					if (dx < tolerance && dy < tolerance) {
-						avgWidth += e.size.width;
-						avgHeight += e.size.height;
-						count++;
-					}
-				}
-				
-				if (count > 0) {
-					bestEllipse.size.width = avgWidth / count;
-					bestEllipse.size.height = avgHeight / count;
-				}
-
-				// Debug: Zeichne das finale Ergebnis in Grün
-				if (debugCtx) {
-					debugCtx.strokeStyle = '#00ff00';
-					debugCtx.lineWidth = 4;
-					debugCtx.beginPath();
-					debugCtx.ellipse(bestEllipse.center.x, bestEllipse.center.y, bestEllipse.size.width / 2, bestEllipse.size.height / 2, bestEllipse.angle * Math.PI / 180, 0, 2 * Math.PI);
-					debugCtx.stroke();
-					
-					// Zeichne Center
-					debugCtx.fillStyle = 'red';
-					debugCtx.beginPath();
-					debugCtx.arc(bestEllipse.center.x, bestEllipse.center.y, 5, 0, 2 * Math.PI);
-					debugCtx.fill();
-				}
-			}
-
-			if (bestEllipse) {
-				const s = camSettings[camId];
-				
-				// 1. Zentrieren
-				// Da wir jetzt translate() VOR rotate() machen, ist x/y einfach die Distanz in Screen-Pixeln
-				s.x = (width / 2) - bestEllipse.center.x;
-				s.y = (height / 2) - bestEllipse.center.y;
-
-				// 2. Rotation korrigieren
-				// Wir drehen das Bild so, dass die Ellipse gerade steht.
-				// OpenCV Angle ist oft der Winkel der ersten Achse.
-				// Wir probieren, es einfach "gerade" zu drehen.
-				// Wenn das Board z.B. 45 Grad gedreht ist, müssen wir -45 Grad drehen.
-				s.rotate = -bestEllipse.angle;
-
-				// 3. Aspect Ratio Korrektur
-				// Jetzt wo es (hoffentlich) gerade steht, schauen wir uns Breite und Höhe an.
-				// fitEllipse liefert width/height der Achsen.
-				
-				const axis1 = bestEllipse.size.width;
-				const axis2 = bestEllipse.size.height;
-				
-				// Wir wissen nicht sicher, welche Achse welche ist nach der Rotation (hängt von OpenCV Version ab),
-				// aber wir wollen einfach, dass BEIDE Achsen gleich lang werden (Kreis).
-				// Wir nehmen die längere Achse als Zielgröße.
-				
-				const maxAxis = Math.max(axis1, axis2);
-				const targetSize = height * 0.85; // 85% der Screen-Höhe
-				
-				// Master Scale setzt die Grundgröße
-				s.scale = targetSize / maxAxis;
-				
-				// Nun die Feinjustierung der Achsen
-				// Da wir um -angle gedreht haben, sollte axis1 jetzt X oder Y entsprechen?
-				// Das ist tricky. Wir machen es pragmatisch:
-				// Wir setzen Scale X und Y so, dass beide Achsen auf 'maxAxis' gestreckt werden.
-				
-				// Wenn wir annehmen, dass width -> X und height -> Y (im unrotierten System der Ellipse):
-				s.scaleX = maxAxis / axis1;
-				s.scaleY = maxAxis / axis2;
-				
-				// Reset 3D & Skew
-				s.rotateX = 0;
-				s.rotateY = 0;
-				s.skewX = 0;
-				s.skewY = 0;
-
-				camSettings = camSettings;
-				
-				alert(`Board erkannt!\nZentriert: Ja\nRotation: ${Math.round(s.rotate)}°\nScale X: ${s.scaleX.toFixed(2)}\nScale Y: ${s.scaleY.toFixed(2)}\n\nFalls es noch "eiert", probiere manuell Scale X/Y nachzujustieren.`);
-				
-			} else {
-				// Debug: Zeige was gesehen wurde, falls nichts erkannt wird
-				console.log("Keine passende Ellipse gefunden. Anzahl Konturen:", contours.size());
-				alert("Kein Dartboard erkannt. Versuche es mit besserem Licht oder Kontrast.");
-			}
-
-			// Cleanup
-			src.delete(); gray.delete(); binary.delete(); contours.delete(); hierarchy.delete();
-		} catch (err) {
-			console.error(err);
-			alert("Fehler bei der Erkennung: " + err.message);
-		}
-	}
-
-	function simulateCamera(camId) {
-		const img = new Image();
-		img.crossOrigin = "Anonymous";
-		// Lokales Testbild aus dem static Ordner
-		img.src = `${base}/board-mock.jpeg`;
-		
-		img.onload = () => {
-			const width = 1280;
-			const height = 720;
-			const canvas = document.createElement('canvas');
-			canvas.width = width;
-			canvas.height = height;
-			const ctx = canvas.getContext('2d');
-			
-			// Hintergrund
-			ctx.fillStyle = '#222';
-			ctx.fillRect(0, 0, width, height);
-			
-			// Bild so skalieren, dass es den Canvas füllt (cover)
-			const scale = Math.max(width / img.width, height / img.height);
-			const x = (width / 2) - (img.width / 2) * scale;
-			const y = (height / 2) - (img.height / 2) * scale;
-			
-			ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
-			
-			// Stream erstellen
-			const stream = canvas.captureStream(30);
-			
-			// Video Element updaten
-			const video = camId === 'cam1' ? videoElem1 : videoElem2;
-			if (video) {
-				video.srcObject = stream;
-				video.play();
-			}
-			
-			// Wenn wir gerade im Settings Modal sind, auch dort das Video updaten
-			if (editingCam === camId) {
-				editVideoSource = stream;
-			}
-			
-			alert("Simulation geladen: Testbild füllt nun den Screen. Klicke jetzt auf 'Auto-Calibrate'.");
-		};
-		
-		img.onerror = () => {
-			alert("Konnte Testbild 'board-mock.jpeg' nicht laden.");
-		};
-	}
-
-	function getTransformStyle(settings) {
+	function getTransformStyle(settings: CamSetting) {
 		const persp = settings.perspective > 0 ? `perspective(${settings.perspective}px)` : '';
 		// Wir kombinieren den Master-Scale mit den individuellen Achsen-Scales
 		const sx = settings.scale * (settings.scaleX || 1);
@@ -394,7 +183,7 @@
 			skew(${settings.skewX}deg, ${settings.skewY}deg);`;
 	}
 
-	function getMaskStyle(settings) {
+	function getMaskStyle(settings: CamSetting) {
 		if (!settings.maskVisible) return '';
 		const r = settings.maskRadius;
 		const f = settings.maskFeather;
@@ -402,9 +191,56 @@
 		return `-webkit-mask-image: ${gradient}; mask-image: ${gradient};`;
 	}
 
+	function srcObject(node: HTMLVideoElement, stream: MediaProvider | null) {
+		node.srcObject = stream;
+		return {
+			update(newStream: MediaProvider | null) {
+				node.srcObject = newStream;
+			}
+		};
+	}
+
+	function loadSettings(slot: 'cam1' | 'cam2', deviceId: string) {
+		if (!deviceId) return;
+		isLoadingSettings[slot] = true;
+		
+		if (savedSettings[deviceId]) {
+			console.log(`Loading settings for ${slot} (${deviceId})`);
+			camSettings[slot] = { ...savedSettings[deviceId] };
+		} else {
+			console.log(`No saved settings for ${slot} (${deviceId}), using defaults`);
+			camSettings[slot] = { ...defaultCamSettings };
+		}
+		
+		// Allow UI to update before enabling save again
+		setTimeout(() => {
+			isLoadingSettings[slot] = false;
+		}, 100);
+	}
+
+	function saveSettings(slot: 'cam1' | 'cam2', deviceId: string, settings: CamSetting) {
+		if (!deviceId || isLoadingSettings[slot]) return;
+		
+		// Deep check if settings are actually different from saved to avoid spamming (optional but good)
+		// For now, just save.
+		savedSettings[deviceId] = { ...settings };
+		localStorage.setItem('dartCamSettings', JSON.stringify(savedSettings));
+		// console.log(`Saved settings for ${deviceId}`);
+	}
+
 	// Svelte Reaktivität: Wenn sich die Auswahl ändert, Stream neu starten
-	$: if (selectedCam1 && videoElem1) startStream(selectedCam1, videoElem1);
-	$: if (selectedCam2 && videoElem2) startStream(selectedCam2, videoElem2);
+	$: if (selectedCam1 && videoElem1) {
+		startStream(selectedCam1, videoElem1);
+		loadSettings('cam1', selectedCam1);
+	}
+	$: if (selectedCam2 && videoElem2) {
+		startStream(selectedCam2, videoElem2);
+		loadSettings('cam2', selectedCam2);
+	}
+
+	// Auto-Save when settings change
+	$: if (selectedCam1 && camSettings.cam1) saveSettings('cam1', selectedCam1, camSettings.cam1);
+	$: if (selectedCam2 && camSettings.cam2) saveSettings('cam2', selectedCam2, camSettings.cam2);
 </script>
 
 <main class="container" class:dragging={isDraggingVertical || isDraggingHorizontal}>
@@ -417,7 +253,7 @@
 				<label for="cam1">Kamera 1:</label>
 				<select id="cam1" bind:value={selectedCam1}>
 					{#each videoDevices as device}
-						<option value={device.deviceId}>{device.label || 'Kamera ' + device.deviceId}</option>
+						<option value={device.deviceId}>{device.label || 'Kamera'} ({device.deviceId.slice(0, 8)}...)</option>
 					{/each}
 				</select>
 				<button class="settings-btn" on:click={() => openSettings('cam1')} title="Einstellungen">
@@ -440,7 +276,7 @@
 				<label for="cam2">Kamera 2:</label>
 				<select id="cam2" bind:value={selectedCam2}>
 					{#each videoDevices as device}
-						<option value={device.deviceId}>{device.label || 'Kamera ' + device.deviceId}</option>
+						<option value={device.deviceId}>{device.label || 'Kamera'} ({device.deviceId.slice(0, 8)}...)</option>
 					{/each}
 				</select>
 				<button class="settings-btn" on:click={() => openSettings('cam2')} title="Einstellungen">
@@ -501,6 +337,8 @@
 
 	<!-- SETTINGS MODAL -->
 	{#if editingCam}
+		<!-- svelte-ignore a11y-click-events-have-key-events -->
+		<!-- svelte-ignore a11y-no-static-element-interactions -->
 		<div class="modal-backdrop" on:click={closeSettings}>
 			<div class="modal-content" on:click|stopPropagation>
 				<div class="modal-header">
@@ -512,7 +350,7 @@
 					<div class="preview-container" style={getMaskStyle(camSettings[editingCam])}>
 						<!-- svelte-ignore a11y-media-has-caption -->
 						<video 
-							srcObject={editVideoSource} 
+							use:srcObject={editVideoSource} 
 							autoplay 
 							playsinline 
 							muted 
@@ -520,38 +358,35 @@
 						></video>
 						<!-- Hilfskreis für Dartboard -->
 						<div class="guide-circle"></div>
-						<!-- Debug Canvas für OpenCV Overlay -->
-						<canvas bind:this={debugCanvas} class="debug-canvas"></canvas>
 					</div>
 
 					<div class="controls-panel">
-						<button class="calibrate-btn" on:click={() => calibrateCamera(editingCam)} disabled={!cvReady}>
-							{cvReady ? '🪄 Auto-Calibrate (Beta)' : 'Lade OpenCV...'}
-						</button>
-						<button class="simulate-btn" on:click={() => simulateCamera(editingCam)}>
-							🧪 Testbild laden
-						</button>
-						<hr />
+						<!-- svelte-ignore a11y-label-has-associated-control -->
 						<div class="control-group">
 							<label>Scale ({camSettings[editingCam].scale})</label>
 							<input type="range" min="0.5" max="3" step="0.01" bind:value={camSettings[editingCam].scale} />
 						</div>
+						<!-- svelte-ignore a11y-label-has-associated-control -->
 						<div class="control-group">
 							<label>Scale X ({camSettings[editingCam].scaleX})</label>
 							<input type="range" min="0.5" max="3" step="0.01" bind:value={camSettings[editingCam].scaleX} />
 						</div>
+						<!-- svelte-ignore a11y-label-has-associated-control -->
 						<div class="control-group">
 							<label>Scale Y ({camSettings[editingCam].scaleY})</label>
 							<input type="range" min="0.5" max="3" step="0.01" bind:value={camSettings[editingCam].scaleY} />
 						</div>
+						<!-- svelte-ignore a11y-label-has-associated-control -->
 						<div class="control-group">
 							<label>Rotate Z ({camSettings[editingCam].rotate}°)</label>
 							<input type="range" min="-180" max="180" step="1" bind:value={camSettings[editingCam].rotate} />
 						</div>
+						<!-- svelte-ignore a11y-label-has-associated-control -->
 						<div class="control-group">
 							<label>Move X ({camSettings[editingCam].x}px)</label>
 							<input type="range" min="-500" max="500" step="1" bind:value={camSettings[editingCam].x} />
 						</div>
+						<!-- svelte-ignore a11y-label-has-associated-control -->
 						<div class="control-group">
 							<label>Move Y ({camSettings[editingCam].y}px)</label>
 							<input type="range" min="-500" max="500" step="1" bind:value={camSettings[editingCam].y} />
@@ -559,15 +394,18 @@
 						
 						<hr />
 						
+						<!-- svelte-ignore a11y-label-has-associated-control -->
 						<div class="control-group">
 							<label>Perspective ({camSettings[editingCam].perspective}px)</label>
 							<input type="range" min="0" max="2000" step="10" bind:value={camSettings[editingCam].perspective} />
 							<small>(0 = aus, kleine Werte = starker 3D Effekt)</small>
 						</div>
+						<!-- svelte-ignore a11y-label-has-associated-control -->
 						<div class="control-group">
 							<label>Rotate X (Tilt Up/Down) ({camSettings[editingCam].rotateX}°)</label>
 							<input type="range" min="-80" max="80" step="1" bind:value={camSettings[editingCam].rotateX} />
 						</div>
+						<!-- svelte-ignore a11y-label-has-associated-control -->
 						<div class="control-group">
 							<label>Rotate Y (Tilt Left/Right) ({camSettings[editingCam].rotateY}°)</label>
 							<input type="range" min="-80" max="80" step="1" bind:value={camSettings[editingCam].rotateY} />
@@ -575,10 +413,12 @@
 						
 						<hr />
 
+						<!-- svelte-ignore a11y-label-has-associated-control -->
 						<div class="control-group">
 							<label>Skew X ({camSettings[editingCam].skewX}°)</label>
 							<input type="range" min="-60" max="60" step="1" bind:value={camSettings[editingCam].skewX} />
 						</div>
+						<!-- svelte-ignore a11y-label-has-associated-control -->
 						<div class="control-group">
 							<label>Skew Y ({camSettings[editingCam].skewY}°)</label>
 							<input type="range" min="-60" max="60" step="1" bind:value={camSettings[editingCam].skewY} />
@@ -594,17 +434,19 @@
 						</div>
 						
 						{#if camSettings[editingCam].maskVisible}
+							<!-- svelte-ignore a11y-label-has-associated-control -->
 							<div class="control-group">
 								<label>Mask Radius ({camSettings[editingCam].maskRadius}%)</label>
 								<input type="range" min="10" max="100" step="1" bind:value={camSettings[editingCam].maskRadius} />
 							</div>
+							<!-- svelte-ignore a11y-label-has-associated-control -->
 							<div class="control-group">
 								<label>Mask Feather ({camSettings[editingCam].maskFeather}%)</label>
 								<input type="range" min="0" max="50" step="1" bind:value={camSettings[editingCam].maskFeather} />
 							</div>
 						{/if}
 
-						<button class="reset-btn" on:click={() => camSettings[editingCam] = { scale: 1, scaleX: 1, scaleY: 1, rotate: 0, x: 0, y: 0, perspective: 1000, rotateX: 0, rotateY: 0, skewX: 0, skewY: 0, maskVisible: false, maskRadius: 45, maskFeather: 15 }}>Reset</button>
+						<button class="reset-btn" on:click={() => { if(editingCam) camSettings[editingCam] = { ...defaultCamSettings }; }}>Reset</button>
 					</div>
 				</div>
 			</div>
@@ -780,16 +622,6 @@
 		left: 0;
 	}
 
-	.debug-canvas {
-		position: absolute;
-		top: 0;
-		left: 0;
-		width: 100%;
-		height: 100%;
-		pointer-events: none;
-		z-index: 10; /* Über dem Video */
-	}
-
 	.guide-circle {
 		position: absolute;
 		width: 340px; /* Ungefähre Größe eines Dartboards auf dem Screen */
@@ -842,45 +674,6 @@
 
 	.reset-btn:hover {
 		background: #b71c1c;
-	}
-
-	.calibrate-btn {
-		width: 100%;
-		padding: 10px;
-		background: #1976d2;
-		color: white;
-		border: none;
-		border-radius: 4px;
-		cursor: pointer;
-		margin-bottom: 15px;
-		font-weight: bold;
-	}
-
-	.calibrate-btn:disabled {
-		background: #555;
-		cursor: not-allowed;
-		opacity: 0.7;
-	}
-
-	.calibrate-btn:hover:not(:disabled) {
-		background: #1565c0;
-	}
-
-	.simulate-btn {
-		width: 100%;
-		padding: 8px;
-		background: #444;
-		color: #ccc;
-		border: 1px solid #555;
-		border-radius: 4px;
-		cursor: pointer;
-		margin-bottom: 15px;
-		font-size: 0.8rem;
-	}
-
-	.simulate-btn:hover {
-		background: #555;
-		color: white;
 	}
 
 	/* --- Resizers --- */

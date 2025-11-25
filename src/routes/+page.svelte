@@ -137,11 +137,39 @@
 				(device) => device.kind === "videoinput",
 			);
 
-			// Auto-Select: Wenn Cams da sind, wähle die ersten beiden standardmäßig aus
-			if (videoDevices.length > 0 && !selectedCam1)
+			// Load saved camera selections
+			const savedSelections = localStorage.getItem("dartCamSelections");
+			let savedCam1 = "";
+			let savedCam2 = "";
+
+			if (savedSelections) {
+				try {
+					const selections = JSON.parse(savedSelections);
+					savedCam1 = selections.cam1;
+					savedCam2 = selections.cam2;
+				} catch (e) {
+					console.error("Failed to parse saved camera selections", e);
+				}
+			}
+
+			// Auto-Select: Prefer saved cam, otherwise default logic
+			if (
+				savedCam1 &&
+				videoDevices.some((d) => d.deviceId === savedCam1)
+			) {
+				selectedCam1 = savedCam1;
+			} else if (videoDevices.length > 0 && !selectedCam1) {
 				selectedCam1 = videoDevices[0].deviceId;
-			if (videoDevices.length > 1 && !selectedCam2)
+			}
+
+			if (
+				savedCam2 &&
+				videoDevices.some((d) => d.deviceId === savedCam2)
+			) {
+				selectedCam2 = savedCam2;
+			} else if (videoDevices.length > 1 && !selectedCam2) {
 				selectedCam2 = videoDevices[1].deviceId;
+			}
 		} catch (err) {
 			console.error("Fehler beim Zugriff auf Kameras:", err);
 			alert("Kamerazugriff verweigert oder nicht möglich.");
@@ -306,6 +334,19 @@
 			localStorage.setItem(
 				"dartCamLabels",
 				JSON.stringify({ cam1: cam1Label, cam2: cam2Label }),
+			);
+		}
+	}
+
+	// Auto-Save Camera Selections
+	$: {
+		if (
+			typeof localStorage !== "undefined" &&
+			(selectedCam1 || selectedCam2)
+		) {
+			localStorage.setItem(
+				"dartCamSelections",
+				JSON.stringify({ cam1: selectedCam1, cam2: selectedCam2 }),
 			);
 		}
 	}

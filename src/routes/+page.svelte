@@ -18,6 +18,10 @@
 		maskVisible: boolean;
 		maskRadius: number;
 		maskFeather: number;
+		brightness: number;
+		contrast: number;
+		saturate: number;
+		sharpness: number;
 	}
 
 	interface CamSettings {
@@ -74,6 +78,10 @@
 		maskVisible: false,
 		maskRadius: 45,
 		maskFeather: 15,
+		brightness: 100,
+		contrast: 100,
+		saturate: 100,
+		sharpness: 0,
 	};
 
 	let camSettings: CamSettings = {
@@ -86,6 +94,10 @@
 
 	let editingCam: "cam1" | "cam2" | null = null; // 'cam1' oder 'cam2' oder null
 	let editVideoSource: MediaProvider | null = null; // Stream für das Modal
+
+	// Collapsible Sections State in Modal
+	let showMaskSettings = false;
+	let showImageSettings = false;
 
 	// Referenzen zu den HTML Video Elementen
 
@@ -115,14 +127,18 @@
 		// Event Listener, falls Kameras während der Laufzeit eingesteckt werden
 		navigator.mediaDevices.ondevicechange = getDevices;
 
-		window.addEventListener("mousemove", handleMouseMove);
-		window.addEventListener("mouseup", handleMouseUp);
+		window.addEventListener("mousemove", handleMove);
+		window.addEventListener("mouseup", handleEnd);
+		window.addEventListener("touchmove", handleMove, { passive: false });
+		window.addEventListener("touchend", handleEnd);
 	});
 
 	onDestroy(() => {
 		if (typeof window !== "undefined") {
-			window.removeEventListener("mousemove", handleMouseMove);
-			window.removeEventListener("mouseup", handleMouseUp);
+			window.removeEventListener("mousemove", handleMove);
+			window.removeEventListener("mouseup", handleEnd);
+			window.removeEventListener("touchmove", handleMove);
+			window.removeEventListener("touchend", handleEnd);
 		}
 	});
 
@@ -198,26 +214,44 @@
 	}
 
 	// Drag Handler Logic
-	function startVerticalDrag() {
+	function startVerticalDrag(e?: MouseEvent | TouchEvent) {
+		if (e && e.type === "touchstart") e.preventDefault();
 		isDraggingVertical = true;
 	}
 
-	function startHorizontalDrag() {
+	function startHorizontalDrag(e?: MouseEvent | TouchEvent) {
+		if (e && e.type === "touchstart") e.preventDefault();
 		isDraggingHorizontal = true;
 	}
 
-	function handleMouseMove(e: MouseEvent) {
+	function handleMove(e: MouseEvent | TouchEvent) {
+		if (!isDraggingVertical && !isDraggingHorizontal) return;
+
+		// Prevent scrolling on touch devices while dragging
+		if (e.type === "touchmove") {
+			e.preventDefault();
+		}
+
+		let clientX, clientY;
+		if ((e as TouchEvent).touches) {
+			clientX = (e as TouchEvent).touches[0].clientX;
+			clientY = (e as TouchEvent).touches[0].clientY;
+		} else {
+			clientX = (e as MouseEvent).clientX;
+			clientY = (e as MouseEvent).clientY;
+		}
+
 		if (isDraggingVertical) {
-			const h = (e.clientY / window.innerHeight) * 100;
+			const h = (clientY / window.innerHeight) * 100;
 			if (h > 10 && h < 90) topHeight = h;
 		}
 		if (isDraggingHorizontal) {
-			const w = (e.clientX / window.innerWidth) * 100;
+			const w = (clientX / window.innerWidth) * 100;
 			if (w > 10 && w < 90) leftWidth = w;
 		}
 	}
 
-	function handleMouseUp() {
+	function handleEnd() {
 		isDraggingVertical = false;
 		isDraggingHorizontal = false;
 	}
@@ -234,9 +268,17 @@
 	function closeSettings() {
 		editingCam = null;
 		editVideoSource = null;
+		// Reset collapsible states
+		showMaskSettings = false;
+		showImageSettings = false;
 	}
 
-	function getTransformStyle(settings: CamSetting) {
+	function getSharpenKernel(amount: number) {
+		const s = amount / 100;
+		return `0 ${-s} 0 ${-s} ${1 + 4 * s} ${-s} 0 ${-s} 0`;
+	}
+
+	function getTransformStyle(settings: CamSetting, camId: string) {
 		const persp =
 			settings.perspective > 0
 				? `perspective(${settings.perspective}px)`
@@ -251,6 +293,11 @@
 		// 3. Scale (Skalieren der Achsen)
 		// 4. 3D Rotations (Tilt)
 
+		let filter = `brightness(${settings.brightness}%) contrast(${settings.contrast}%) saturate(${settings.saturate}%)`;
+		if (settings.sharpness > 0) {
+			filter += ` url(#sharpen-${camId})`;
+		}
+
 		return `transform: 
 			${persp}
 			translate(${settings.x}px, ${settings.y}px)
@@ -258,7 +305,8 @@
 			scale(${sx}, ${sy}) 
 			rotateX(${settings.rotateX}deg)
 			rotateY(${settings.rotateY}deg)
-			skew(${settings.skewX}deg, ${settings.skewY}deg);`;
+			skew(${settings.skewX}deg, ${settings.skewY}deg);
+			filter: ${filter};`;
 	}
 
 	function getMaskStyle(settings: CamSetting) {
@@ -284,7 +332,11 @@
 
 		if (savedSettings[deviceId]) {
 			console.log(`Loading settings for ${slot} (${deviceId})`);
-			camSettings[slot] = { ...savedSettings[deviceId] };
+			// Merge defaults with saved settings to ensure new properties exist (migration for old data)
+			camSettings[slot] = {
+				...defaultCamSettings,
+				...savedSettings[deviceId],
+			};
 		} else {
 			console.log(
 				`No saved settings for ${slot} (${deviceId}), using defaults`,
@@ -356,6 +408,26 @@
 	class="container"
 	class:dragging={isDraggingVertical || isDraggingHorizontal}
 >
+	<!-- SVG Filters for Sharpening -->
+	<svg style="display: none;">
+		<defs>
+			<filter id="sharpen-cam1">
+				<feConvolveMatrix
+					order="3"
+					kernelMatrix={getSharpenKernel(camSettings.cam1.sharpness)}
+					preserveAlpha="true"
+				/>
+			</filter>
+			<filter id="sharpen-cam2">
+				<feConvolveMatrix
+					order="3"
+					kernelMatrix={getSharpenKernel(camSettings.cam2.sharpness)}
+					preserveAlpha="true"
+				/>
+			</filter>
+		</defs>
+	</svg>
+
 	<!-- OBERER BEREICH: KAMERAS -->
 	<div class="camera-section" style="height: {topHeight}%;">
 		<!-- Kamera 1 -->
@@ -421,7 +493,7 @@
 					autoplay
 					playsinline
 					muted
-					style={getTransformStyle(camSettings.cam1)}
+					style={getTransformStyle(camSettings.cam1, "cam1")}
 				></video>
 			</div>
 			<div class="cam-label left">
@@ -434,6 +506,7 @@
 		<div
 			class="resizer-horizontal"
 			on:mousedown={startHorizontalDrag}
+			on:touchstart={startHorizontalDrag}
 		></div>
 
 		<!-- Kamera 2 -->
@@ -499,7 +572,7 @@
 					autoplay
 					playsinline
 					muted
-					style={getTransformStyle(camSettings.cam2)}
+					style={getTransformStyle(camSettings.cam2, "cam2")}
 				></video>
 			</div>
 			<div class="cam-label right">
@@ -510,7 +583,11 @@
 
 	<!-- Vertical Resizer (zwischen Kameras und Iframe) -->
 	<!-- svelte-ignore a11y-no-static-element-interactions -->
-	<div class="resizer-vertical" on:mousedown={startVerticalDrag}></div>
+	<div
+		class="resizer-vertical"
+		on:mousedown={startVerticalDrag}
+		on:touchstart={startVerticalDrag}
+	></div>
 
 	<!-- UNTERER BEREICH: 2K DART SOFTWARE IFRAME -->
 	<div class="iframe-section" style="flex: 1;">
@@ -645,7 +722,10 @@
 							autoplay
 							playsinline
 							muted
-							style={getTransformStyle(camSettings[editingCam])}
+							style={getTransformStyle(
+								camSettings[editingCam],
+								editingCam,
+							)}
 						></video>
 						<!-- Hilfskreis für Dartboard -->
 						<div class="guide-circle"></div>
@@ -815,53 +895,170 @@
 
 						<hr />
 
-						<div class="control-group">
-							<label
-								style="display: flex; align-items: center; gap: 10px; cursor: pointer;"
+						<hr />
+
+						<!-- Bildanpassungen Collapsible -->
+						<div
+							class="collapsible-header"
+							on:click={() =>
+								(showImageSettings = !showImageSettings)}
+						>
+							<span>Bildanpassungen</span>
+							<span class="arrow" class:open={showImageSettings}
+								>▼</span
 							>
-								<input
-									type="checkbox"
-									bind:checked={
-										camSettings[editingCam].maskVisible
-									}
-									style="width: auto;"
-								/>
-								<span>Runde Maske aktivieren</span>
-							</label>
 						</div>
 
-						{#if camSettings[editingCam].maskVisible}
-							<!-- svelte-ignore a11y-label-has-associated-control -->
-							<div class="control-group">
-								<label
-									>Mask Radius ({camSettings[editingCam]
-										.maskRadius}%)</label
+						{#if showImageSettings}
+							<div class="collapsible-content">
+								<div class="control-group">
+									<label
+										>Helligkeit ({camSettings[editingCam]
+											.brightness}%)</label
+									>
+									<input
+										type="range"
+										min="0"
+										max="200"
+										step="1"
+										bind:value={
+											camSettings[editingCam].brightness
+										}
+									/>
+								</div>
+								<div class="control-group">
+									<label
+										>Kontrast ({camSettings[editingCam]
+											.contrast}%)</label
+									>
+									<input
+										type="range"
+										min="0"
+										max="200"
+										step="1"
+										bind:value={
+											camSettings[editingCam].contrast
+										}
+									/>
+								</div>
+								<div class="control-group">
+									<label
+										>Sättigung ({camSettings[editingCam]
+											.saturate}%)</label
+									>
+									<input
+										type="range"
+										min="0"
+										max="200"
+										step="1"
+										bind:value={
+											camSettings[editingCam].saturate
+										}
+									/>
+								</div>
+								<div class="control-group">
+									<label
+										>Schärfe ({camSettings[editingCam]
+											.sharpness})</label
+									>
+									<input
+										type="range"
+										min="0"
+										max="100"
+										step="1"
+										bind:value={
+											camSettings[editingCam].sharpness
+										}
+									/>
+								</div>
+								<button
+									class="reset-btn small"
+									on:click={() => {
+										if (editingCam) {
+											camSettings[editingCam].brightness =
+												100;
+											camSettings[editingCam].contrast =
+												100;
+											camSettings[editingCam].saturate =
+												100;
+											camSettings[editingCam].sharpness =
+												0;
+										}
+									}}>Reset Bild</button
 								>
-								<input
-									type="range"
-									min="10"
-									max="100"
-									step="1"
-									bind:value={
-										camSettings[editingCam].maskRadius
-									}
-								/>
 							</div>
-							<!-- svelte-ignore a11y-label-has-associated-control -->
-							<div class="control-group">
-								<label
-									>Mask Feather ({camSettings[editingCam]
-										.maskFeather}%)</label
-								>
-								<input
-									type="range"
-									min="0"
-									max="50"
-									step="1"
-									bind:value={
-										camSettings[editingCam].maskFeather
-									}
-								/>
+						{/if}
+
+						<hr />
+
+						<!-- Maske Collapsible -->
+						<div
+							class="collapsible-header"
+							on:click={() =>
+								(showMaskSettings = !showMaskSettings)}
+						>
+							<span>Maske / Zuschnitt</span>
+							<span class="arrow" class:open={showMaskSettings}
+								>▼</span
+							>
+						</div>
+
+						{#if showMaskSettings}
+							<div class="collapsible-content">
+								<div class="control-group">
+									<label
+										style="display: flex; align-items: center; gap: 10px; cursor: pointer;"
+									>
+										<input
+											type="checkbox"
+											bind:checked={
+												camSettings[editingCam]
+													.maskVisible
+											}
+											style="width: auto;"
+										/>
+										<span>Runde Maske aktivieren</span>
+									</label>
+								</div>
+
+								{#if camSettings[editingCam].maskVisible}
+									<!-- svelte-ignore a11y-label-has-associated-control -->
+									<div class="control-group">
+										<label
+											>Mask Radius ({camSettings[
+												editingCam
+											].maskRadius}%)</label
+										>
+										<input
+											type="range"
+											min="10"
+											max="100"
+											step="1"
+											bind:value={
+												camSettings[editingCam]
+													.maskRadius
+											}
+										/>
+									</div>
+									<!-- svelte-ignore a11y-label-has-associated-control -->
+									<div class="control-group">
+										<label
+											>Mask Feather ({camSettings[
+												editingCam
+											].maskFeather}%)</label
+										>
+										<input
+											type="range"
+											min="0"
+											max="50"
+											step="1"
+											bind:value={
+												camSettings[editingCam]
+													.maskFeather
+											}
+										/>
+									</div>
+								{/if}
 							</div>
 						{/if}
 
@@ -1148,6 +1345,17 @@
 		background: #b71c1c;
 	}
 
+	.reset-btn.small {
+		margin-top: 10px;
+		padding: 5px;
+		font-size: 0.8rem;
+		background: #555;
+	}
+
+	.reset-btn.small:hover {
+		background: #666;
+	}
+
 	/* --- Resizers --- */
 	.resizer-vertical {
 		height: 8px;
@@ -1282,5 +1490,36 @@
 		/* height wird inline gesetzt */
 		background: white; /* Dartsoftware ist meist hell */
 		border: none;
+	}
+	.collapsible-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 10px;
+		background: #333;
+		cursor: pointer;
+		border-radius: 4px;
+		margin-bottom: 5px;
+		user-select: none;
+	}
+
+	.collapsible-header:hover {
+		background: #444;
+	}
+
+	.collapsible-header .arrow {
+		transition: transform 0.3s;
+		font-size: 0.8rem;
+	}
+
+	.collapsible-header .arrow.open {
+		transform: rotate(180deg);
+	}
+
+	.collapsible-content {
+		padding: 10px;
+		background: #252525;
+		border-radius: 4px;
+		margin-bottom: 15px;
 	}
 </style>

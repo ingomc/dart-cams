@@ -1,7 +1,8 @@
 {
   "name": "SCO-Dartcams",
   "short_name": "SCO-Dartcams",
-  "start_url": "/",
+  "start_url": ".",
+  "scope": ".",
   "display": "standalone",
   "background_color": "#1a1a1a",
   "theme_color": "#222222",

@@ -1,11 +1,11 @@
 <script>
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy } from "svelte";
 
 	export let videoDevices = [];
 	export let visible = false;
 
 	let videoElement;
-	let selectedDeviceId = '';
+	let selectedDeviceId = "";
 	let stream = null;
 
 	// Position and Size
@@ -29,13 +29,17 @@
 	let initialHeight = 0;
 
 	onMount(() => {
-		window.addEventListener('mousemove', handleMouseMove);
-		window.addEventListener('mouseup', handleMouseUp);
+		window.addEventListener("mousemove", handleMove);
+		window.addEventListener("mouseup", handleEnd);
+		window.addEventListener("touchmove", handleMove, { passive: false });
+		window.addEventListener("touchend", handleEnd);
 	});
 
 	onDestroy(() => {
-		window.removeEventListener('mousemove', handleMouseMove);
-		window.removeEventListener('mouseup', handleMouseUp);
+		window.removeEventListener("mousemove", handleMove);
+		window.removeEventListener("mouseup", handleEnd);
+		window.removeEventListener("touchmove", handleMove);
+		window.removeEventListener("touchend", handleEnd);
 		stopStream();
 	});
 
@@ -45,7 +49,7 @@
 
 		try {
 			stream = await navigator.mediaDevices.getUserMedia({
-				video: { deviceId: { exact: selectedDeviceId } }
+				video: { deviceId: { exact: selectedDeviceId } },
 			});
 			if (videoElement) {
 				videoElement.srcObject = stream;
@@ -57,7 +61,7 @@
 
 	function stopStream() {
 		if (stream) {
-			stream.getTracks().forEach(track => track.stop());
+			stream.getTracks().forEach((track) => track.stop());
 			stream = null;
 		}
 		if (videoElement) {
@@ -72,10 +76,20 @@
 
 	// Dragging Logic
 	function startDrag(e) {
-		if (e.target.closest('.controls') || e.target.closest('.resizer')) return;
+		if (e.target.closest(".controls") || e.target.closest(".resizer"))
+			return;
+		if (e.type === "touchstart") e.preventDefault();
+
 		isDragging = true;
-		dragStartX = e.clientX;
-		dragStartY = e.clientY;
+
+		if (e.touches) {
+			dragStartX = e.touches[0].clientX;
+			dragStartY = e.touches[0].clientY;
+		} else {
+			dragStartX = e.clientX;
+			dragStartY = e.clientY;
+		}
+
 		initialX = x;
 		initialY = y;
 	}
@@ -83,28 +97,59 @@
 	// Resizing Logic
 	function startResize(e) {
 		e.stopPropagation();
+		if (e.type === "touchstart") e.preventDefault();
+
 		isResizing = true;
-		resizeStartX = e.clientX;
-		resizeStartY = e.clientY;
+
+		if (e.touches) {
+			resizeStartX = e.touches[0].clientX;
+			resizeStartY = e.touches[0].clientY;
+		} else {
+			resizeStartX = e.clientX;
+			resizeStartY = e.clientY;
+		}
+
 		initialWidth = width;
 		initialHeight = height;
 	}
 
-	function handleMouseMove(e) {
+	function handleMove(e) {
 		if (isDragging) {
-			const dx = e.clientX - dragStartX;
-			const dy = e.clientY - dragStartY;
+			if (e.type === "touchmove") e.preventDefault();
+
+			let clientX, clientY;
+			if (e.touches) {
+				clientX = e.touches[0].clientX;
+				clientY = e.touches[0].clientY;
+			} else {
+				clientX = e.clientX;
+				clientY = e.clientY;
+			}
+
+			const dx = clientX - dragStartX;
+			const dy = clientY - dragStartY;
 			x = initialX + dx;
 			y = initialY + dy;
 		} else if (isResizing) {
-			const dx = e.clientX - resizeStartX;
-			const dy = e.clientY - resizeStartY;
+			if (e.type === "touchmove") e.preventDefault();
+
+			let clientX, clientY;
+			if (e.touches) {
+				clientX = e.touches[0].clientX;
+				clientY = e.touches[0].clientY;
+			} else {
+				clientX = e.clientX;
+				clientY = e.clientY;
+			}
+
+			const dx = clientX - resizeStartX;
+			const dy = clientY - resizeStartY;
 			width = Math.max(160, initialWidth + dx); // Min width
 			height = Math.max(120, initialHeight + dy); // Min height
 		}
 	}
 
-	function handleMouseUp() {
+	function handleEnd() {
 		isDragging = false;
 		isResizing = false;
 	}
@@ -112,7 +157,7 @@
 	$: if (selectedDeviceId) {
 		startStream();
 	}
-	
+
 	// Stop stream when hidden
 	$: if (!visible) {
 		stopStream();
@@ -123,19 +168,23 @@
 
 {#if visible}
 	{#if isDragging || isResizing}
-		<div class="drag-overlay" style="cursor: {isResizing ? 'se-resize' : 'grabbing'}"></div>
+		<div
+			class="drag-overlay"
+			style="cursor: {isResizing ? 'se-resize' : 'grabbing'}"
+		></div>
 	{/if}
 	<!-- svelte-ignore a11y-no-static-element-interactions -->
-	<div 
-		class="floating-window" 
+	<div
+		class="floating-window"
 		style="left: {x}px; top: {y}px; width: {width}px; height: {height}px;"
 		on:mousedown={startDrag}
+		on:touchstart={startDrag}
 	>
 		<div class="header">
 			<span class="drag-handle">Webcam</span>
 			<button class="close-btn" on:click={handleClose}>&times;</button>
 		</div>
-		
+
 		<div class="video-container">
 			<!-- svelte-ignore a11y-media-has-caption -->
 			<video bind:this={videoElement} autoplay playsinline muted></video>
@@ -145,12 +194,21 @@
 			<select bind:value={selectedDeviceId}>
 				<option value="">Kamera wählen...</option>
 				{#each videoDevices as device}
-					<option value={device.deviceId}>{device.label || 'Kamera'} ({device.deviceId.slice(0, 8)}...)</option>
+					<option value={device.deviceId}
+						>{device.label || "Kamera"} ({device.deviceId.slice(
+							0,
+							8,
+						)}...)</option
+					>
 				{/each}
 			</select>
 		</div>
 
-		<div class="resizer" on:mousedown={startResize}></div>
+		<div
+			class="resizer"
+			on:mousedown={startResize}
+			on:touchstart={startResize}
+		></div>
 	</div>
 {/if}
 
@@ -160,7 +218,7 @@
 		background: #222;
 		border: 1px solid #444;
 		border-radius: 8px;
-		box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+		box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
 		display: flex;
 		flex-direction: column;
 		z-index: 2000;

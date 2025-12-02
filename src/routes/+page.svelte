@@ -56,6 +56,7 @@
 	let leftWidth = 50; // in %
 	let isDraggingVertical = false;
 	let isDraggingHorizontal = false;
+	let showIframe = true;
 
 	// Iframe Settings
 	let cropTop = 0; // Pixel, die oben abgeschnitten werden sollen
@@ -101,6 +102,217 @@
 
 	// Referenzen zu den HTML Video Elementen
 
+	// WebSocket State
+	interface MatchPlayer {
+		playerName: string;
+		points: number;
+		legs: number;
+		sets: number;
+		darts: string; // "9" in example, but could be number
+		lastScore: number;
+	}
+
+	interface MatchData {
+		match: {
+			matchPlayers: MatchPlayer[];
+			mode: string;
+			roundName: string;
+			groupName: string;
+		};
+	}
+
+	let ws: WebSocket | null = null;
+	let wsMessage: string | null = "Kein WebSocket";
+	let matchData: MatchData | null = null;
+	let wsUrl = "";
+
+	let matches: MatchData['match'][] = [];
+	let databaseId = "";
+	let groupKey = "";
+
+	// Scoreboard State per Camera
+	let cam1BoardKey = "";
+	let cam2BoardKey = "";
+	
+	// Scoreboard Positions (Percent)
+	let cam1ScorePos = { x: 50, y: 10 };
+	let cam2ScorePos = { x: 50, y: 10 };
+	
+	let isDraggingScore1 = false;
+	let isDraggingScore2 = false;
+
+	// Reaktivität: Wenn Scoring URL sich ändert, Matches laden
+	$: if (scoringUrl) {
+		const match = scoringUrl.match(/event\/(\d+)\/(\d+)/);
+		if (match) {
+			databaseId = match[1];
+			groupKey = match[2];
+			fetchMatches();
+			
+			// Automatisch WS URL setzen
+			const baseUrl = "wss://live-backend.2k-dart-software.com/dartsscorer-liveticker/api/v1/websocket";
+			// SockJS benötigt server_id/session_id/websocket
+			const serverId = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+			const sessionId = Math.random().toString(36).substring(2, 10);
+			const newWsUrl = `${baseUrl}/${serverId}/${sessionId}/websocket`;
+			
+			if (wsUrl !== newWsUrl) {
+				wsUrl = newWsUrl;
+			}
+		}
+	}
+
+	// Reaktivität: Wenn wsUrl oder IDs sich ändern, verbinden
+	$: if (wsUrl && databaseId && groupKey) {
+		connectWs(wsUrl);
+	}
+
+	function getMatchData(key: string): MatchData | null {
+		if (!key) return null;
+		const m = matches.find(x => x.matchKey === key);
+		return m ? { match: m } : null;
+	}
+
+	// Drag Logic for Scoreboards
+	function startScoreDrag(cam: 1 | 2, e: MouseEvent | TouchEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		if (cam === 1) isDraggingScore1 = true;
+		else isDraggingScore2 = true;
+	}
+
+	function handleScoreMove(e: MouseEvent | TouchEvent) {
+		if (!isDraggingScore1 && !isDraggingScore2) return;
+
+		let clientX, clientY;
+		if ((e as TouchEvent).touches) {
+			clientX = (e as TouchEvent).touches[0].clientX;
+			clientY = (e as TouchEvent).touches[0].clientY;
+		} else {
+			clientX = (e as MouseEvent).clientX;
+			clientY = (e as MouseEvent).clientY;
+		}
+
+		// Find parent container dimensions to calculate percentage
+		// We assume the move event happens on window, so we need to find the active container
+		// This is a bit simplified, ideally we'd ref the container elements
+		const container1 = document.querySelector('.cam-container:first-child');
+		const container2 = document.querySelector('.cam-container:last-child');
+
+		if (isDraggingScore1 && container1) {
+			const rect = container1.getBoundingClientRect();
+			const x = ((clientX - rect.left) / rect.width) * 100;
+			const y = ((clientY - rect.top) / rect.height) * 100;
+			cam1ScorePos = { x: Math.max(0, Math.min(100, x)), y: Math.max(0, Math.min(100, y)) };
+		}
+		
+		if (isDraggingScore2 && container2) {
+			const rect = container2.getBoundingClientRect();
+			const x = ((clientX - rect.left) / rect.width) * 100;
+			const y = ((clientY - rect.top) / rect.height) * 100;
+			cam2ScorePos = { x: Math.max(0, Math.min(100, x)), y: Math.max(0, Math.min(100, y)) };
+		}
+	}
+
+	function handleScoreEnd() {
+		isDraggingScore1 = false;
+		isDraggingScore2 = false;
+	}
+
+	async function fetchMatches() {
+		if (!databaseId || !groupKey) return;
+		try {
+			// API Call: match/{database}/0/{groupKey}
+			const res = await fetch(`https://live-backend.2k-dart-software.com/dartsscorer-liveticker/api/v1/match/${databaseId}/0/${groupKey}`);
+			const json = await res.json();
+			if (json && json.data) {
+				matches = json.data;
+				// Auto-select first match if none selected
+				if (!selectedMatchKey && matches.length > 0) {
+					selectedMatchKey = matches[0].matchKey;
+				}
+			}
+		} catch (e) {
+			console.error("Fehler beim Laden der Matches:", e);
+		}
+	}
+
+	function connectWs(url: string) {
+		if (ws) {
+			ws.close();
+		}
+		try {
+			console.log("Verbinde zu WebSocket:", url);
+			ws = new WebSocket(url);
+			
+			ws.onopen = () => {
+				wsMessage = "Verbunden. Abonniere...";
+				// Connect Frame senden (STOMP)
+				ws?.send('["CONNECT\\naccept-version:1.1,1.0\\nheart-beat:10000,10000\\n\\n\\u0000"]');
+			};
+			
+			ws.onmessage = (event) => {
+				const data = event.data;
+				
+				// Heartbeat check
+				if (data === "a[\"\\n\"]") return;
+
+				if (typeof data === "string" && data.startsWith('a["')) {
+					try {
+						const inner = JSON.parse(data.substring(1));
+						if (Array.isArray(inner) && inner.length > 0) {
+							const stompMessage = inner[0];
+							
+							// Handle CONNECTED frame
+							if (stompMessage.startsWith("CONNECTED")) {
+								wsMessage = "Verbunden. Warte auf Daten...";
+								// Subscribe to Group Topic
+								const topic = `/topic/${databaseId}-${groupKey}`;
+								const subId = "sub-0";
+								const subFrame = `["SUBSCRIBE\\nid:${subId}\\ndestination:${topic}\\n\\n\\u0000"]`;
+								ws?.send(subFrame);
+								return;
+							}
+
+							// Handle MESSAGE frame
+							const bodyStart = stompMessage.indexOf("\n\n");
+							if (bodyStart !== -1) {
+								let jsonStr = stompMessage.substring(bodyStart + 2);
+								if (jsonStr.endsWith("\u0000")) {
+									jsonStr = jsonStr.substring(0, jsonStr.length - 1);
+								}
+								const parsed = JSON.parse(jsonStr);
+								
+							// Check if this message is for the selected match
+								if (parsed && parsed.match) {
+									// Update match list entry
+									const idx = matches.findIndex(m => m.matchKey === parsed.match.matchKey);
+									if (idx !== -1) {
+										matches[idx] = parsed.match;
+									}
+								}
+							}
+						}
+					} catch (e) {
+						console.error("Parse error:", e);
+					}
+				}
+			};
+
+			ws.onerror = (error) => {
+				console.error("WebSocket Fehler:", error);
+				wsMessage = "Fehler bei Verbindung";
+			};
+
+			ws.onclose = () => {
+				wsMessage = "Verbindung getrennt";
+			};
+		} catch (e) {
+			console.error("Konnte WebSocket nicht erstellen:", e);
+			wsMessage = "Ungültige URL";
+		}
+	}
+
 	onMount(() => {
 		// Load saved settings from localStorage
 		const saved = localStorage.getItem("dartCamSettings");
@@ -131,6 +343,12 @@
 		window.addEventListener("mouseup", handleEnd);
 		window.addEventListener("touchmove", handleMove, { passive: false });
 		window.addEventListener("touchend", handleEnd);
+
+		// Additional listeners for scoreboard dragging
+		window.addEventListener("mousemove", handleScoreMove);
+		window.addEventListener("mouseup", handleScoreEnd);
+		window.addEventListener("touchmove", handleScoreMove, { passive: false });
+		window.addEventListener("touchend", handleScoreEnd);
 	});
 
 	onDestroy(() => {
@@ -139,6 +357,11 @@
 			window.removeEventListener("mouseup", handleEnd);
 			window.removeEventListener("touchmove", handleMove);
 			window.removeEventListener("touchend", handleEnd);
+
+			window.removeEventListener("mousemove", handleScoreMove);
+			window.removeEventListener("mouseup", handleScoreEnd);
+			window.removeEventListener("touchmove", handleScoreMove);
+			window.removeEventListener("touchend", handleScoreEnd);
 		}
 	});
 
@@ -429,9 +652,43 @@
 	</svg>
 
 	<!-- OBERER BEREICH: KAMERAS -->
-	<div class="camera-section" style="height: {topHeight}%;">
+	<div class="camera-section" style="height: {showIframe ? topHeight : 100}%;">
 		<!-- Kamera 1 -->
 		<div class="cam-container" style="width: {leftWidth}%;">
+			<!-- Scoreboard Overlay Cam 1 -->
+			{#if cam1BoardKey}
+				{@const data = getMatchData(cam1BoardKey)}
+				{#if data}
+					<!-- svelte-ignore a11y-no-static-element-interactions -->
+					<div 
+						class="ws-message-overlay draggable" 
+						style="left: {cam1ScorePos.x}%; top: {cam1ScorePos.y}%;"
+						on:mousedown={(e) => startScoreDrag(1, e)}
+						on:touchstart={(e) => startScoreDrag(1, e)}
+					>
+						<div class="scoreboard">
+							<div class="match-info">
+								{data.match.groupName} - {data.match.roundName} ({data.match.mode})
+							</div>
+							<div class="players">
+								{#each data.match.matchPlayers as player}
+									<div class="player">
+										<div class="name">{player.playerName}</div>
+										<div class="score">{player.points}</div>
+										<div class="stats">
+											Sets: {player.sets} | Legs: {player.legs}
+										</div>
+										{#if player.lastScore}
+											<div class="last-score">Last: {player.lastScore}</div>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						</div>
+					</div>
+				{/if}
+			{/if}
+
 			<div class="controls" class:visible={showCam1Controls}>
 				<label for="cam1">Kamera 1:</label>
 				<select id="cam1" bind:value={selectedCam1}>
@@ -444,6 +701,17 @@
 						>
 					{/each}
 				</select>
+				
+				{#if matches.length > 0}
+					<label for="cam1Board" style="margin-left: 10px;">Board:</label>
+					<select id="cam1Board" bind:value={cam1BoardKey} style="max-width: 100px;">
+						<option value="">Keins</option>
+						{#each matches as match}
+							<option value={match.matchKey}>B{match.board}</option>
+						{/each}
+					</select>
+				{/if}
+
 				<button
 					class="settings-btn"
 					on:click={() => openSettings("cam1")}
@@ -511,6 +779,40 @@
 
 		<!-- Kamera 2 -->
 		<div class="cam-container" style="width: {100 - leftWidth}%;">
+			<!-- Scoreboard Overlay Cam 2 -->
+			{#if cam2BoardKey}
+				{@const data = getMatchData(cam2BoardKey)}
+				{#if data}
+					<!-- svelte-ignore a11y-no-static-element-interactions -->
+					<div 
+						class="ws-message-overlay draggable" 
+						style="left: {cam2ScorePos.x}%; top: {cam2ScorePos.y}%;"
+						on:mousedown={(e) => startScoreDrag(2, e)}
+						on:touchstart={(e) => startScoreDrag(2, e)}
+					>
+						<div class="scoreboard">
+							<div class="match-info">
+								{data.match.groupName} - {data.match.roundName} ({data.match.mode})
+							</div>
+							<div class="players">
+								{#each data.match.matchPlayers as player}
+									<div class="player">
+										<div class="name">{player.playerName}</div>
+										<div class="score">{player.points}</div>
+										<div class="stats">
+											Sets: {player.sets} | Legs: {player.legs}
+										</div>
+										{#if player.lastScore}
+											<div class="last-score">Last: {player.lastScore}</div>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						</div>
+					</div>
+				{/if}
+			{/if}
+
 			<div class="controls" class:visible={showCam2Controls}>
 				<label for="cam2">Kamera 2:</label>
 				<select id="cam2" bind:value={selectedCam2}>
@@ -523,6 +825,17 @@
 						>
 					{/each}
 				</select>
+
+				{#if matches.length > 0}
+					<label for="cam2Board" style="margin-left: 10px;">Board:</label>
+					<select id="cam2Board" bind:value={cam2BoardKey} style="max-width: 100px;">
+						<option value="">Keins</option>
+						{#each matches as match}
+							<option value={match.matchKey}>B{match.board}</option>
+						{/each}
+					</select>
+				{/if}
+
 				<button
 					class="settings-btn"
 					on:click={() => openSettings("cam2")}
@@ -582,117 +895,155 @@
 	</div>
 
 	<!-- Vertical Resizer (zwischen Kameras und Iframe) -->
-	<!-- svelte-ignore a11y-no-static-element-interactions -->
-	<div
-		class="resizer-vertical"
-		on:mousedown={startVerticalDrag}
-		on:touchstart={startVerticalDrag}
-	></div>
+	{#if showIframe}
+		<!-- svelte-ignore a11y-no-static-element-interactions -->
+		<div
+			class="resizer-vertical"
+			on:mousedown={startVerticalDrag}
+			on:touchstart={startVerticalDrag}
+		></div>
+	{/if}
 
 	<!-- UNTERER BEREICH: 2K DART SOFTWARE IFRAME -->
-	<div class="iframe-section" style="flex: 1;">
-		<!-- Overlay to prevent iframe from capturing mouse events during drag -->
-		{#if isDraggingVertical || isDraggingHorizontal}
-			<div class="iframe-overlay"></div>
-		{/if}
-		<div class="iframe-controls" class:visible={showIframeControls}>
-			<label for="url">Scoring URL:</label>
-			<input
-				type="text"
-				id="url"
-				bind:value={scoringUrl}
-				placeholder="https://..."
-			/>
+	{#if showIframe}
+		<div class="iframe-section" style="flex: 1;">
+			<!-- Overlay to prevent iframe from capturing mouse events during drag -->
+			{#if isDraggingVertical || isDraggingHorizontal}
+				<div class="iframe-overlay"></div>
+			{/if}
+			<div class="iframe-controls" class:visible={showIframeControls}>
+				<label for="url">Scoring URL:</label>
+				<input
+					type="text"
+					id="url"
+					bind:value={scoringUrl}
+					placeholder="https://..."
+				/>
 
-			<label for="crop" style="margin-left: 10px;">Crop Top:</label>
-			<input
-				type="number"
-				id="crop"
-				bind:value={cropTop}
-				min="0"
-				style="width: 50px;"
-			/>
+				{#if matches.length > 0}
+					<div style="margin-left: 10px; color: #aaa; font-size: 0.8rem;">
+						{matches.length} Matches geladen
+					</div>
+				{/if}
 
-			<label for="cropBottom" style="margin-left: 10px;">Bottom:</label>
-			<input
-				type="number"
-				id="cropBottom"
-				bind:value={cropBottom}
-				min="0"
-				style="width: 50px;"
-			/>
+				<label for="wsurl" style="margin-left: 10px;">WS URL:</label>
+				<input
+					type="text"
+					id="wsurl"
+					bind:value={wsUrl}
+					placeholder="wss://..."
+				/>
 
-			<label for="zoom" style="margin-left: 10px;">Zoom:</label>
-			<input
-				type="range"
-				id="zoom"
-				bind:value={iframeZoom}
-				min="0.5"
-				max="2"
-				step="0.1"
-				style="width: 80px;"
-				title="Zoom: {Math.round(iframeZoom * 100)}%"
-			/>
+				<label for="crop" style="margin-left: 10px;">Crop Top:</label>
+				<input
+					type="number"
+					id="crop"
+					bind:value={cropTop}
+					min="0"
+					style="width: 50px;"
+				/>
 
-			<button
-				class="toggle-webcam-btn"
-				on:click={() => (showFloatingWebcam = !showFloatingWebcam)}
-				title="Zusätzliche Webcam anzeigen"
-			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					width="16"
-					height="16"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					style="margin-right: 5px;"
-					><path
-						d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
-					></path><circle cx="12" cy="13" r="4"></circle></svg
+				<label for="cropBottom" style="margin-left: 10px;">Bottom:</label>
+				<input
+					type="number"
+					id="cropBottom"
+					bind:value={cropBottom}
+					min="0"
+					style="width: 50px;"
+				/>
+
+				<label for="zoom" style="margin-left: 10px;">Zoom:</label>
+				<input
+					type="range"
+					id="zoom"
+					bind:value={iframeZoom}
+					min="0.5"
+					max="2"
+					step="0.1"
+					style="width: 80px;"
+					title="Zoom: {Math.round(iframeZoom * 100)}%"
+				/>
+
+				<button
+					class="toggle-webcam-btn"
+					on:click={() => (showFloatingWebcam = !showFloatingWebcam)}
+					title="Zusätzliche Webcam anzeigen"
 				>
-				{showFloatingWebcam ? "Webcam schließen" : "Webcam öffnen"}
-			</button>
-			<button
-				class="toggle-bar-btn"
-				on:click={() => (showIframeControls = !showIframeControls)}
-				title={showIframeControls ? "Ausblenden" : "Einblenden"}
-			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					width="16"
-					height="16"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					style="transform: rotate({showIframeControls
-						? 180
-						: 0}deg); transition: transform 0.3s;"
-					><polyline points="6 9 12 15 18 9"></polyline></svg
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						width="16"
+						height="16"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						style="margin-right: 5px;"
+						><path
+							d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
+						></path><circle cx="12" cy="13" r="4"></circle></svg
+					>
+					{showFloatingWebcam ? "Webcam schließen" : "Webcam öffnen"}
+				</button>
+
+				<button
+					class="toggle-webcam-btn"
+					on:click={() => (showIframe = false)}
+					title="Iframe ausblenden"
+					style="margin-left: 10px;"
 				>
-			</button>
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px;"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+					Hide
+				</button>
+
+				<button
+					class="toggle-bar-btn"
+					on:click={() => (showIframeControls = !showIframeControls)}
+					title={showIframeControls ? "Ausblenden" : "Einblenden"}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						width="16"
+						height="16"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						style="transform: rotate({showIframeControls
+							? 180
+							: 0}deg); transition: transform 0.3s;"
+						><polyline points="6 9 12 15 18 9"></polyline></svg
+					>
+				</button>
+			</div>
+			<div class="iframe-wrapper">
+				<iframe
+					src={scoringUrl}
+					title="Live Scoring"
+					frameborder="0"
+					style="
+						margin-top: -{cropTop}px; 
+						width: {100 / iframeZoom}%;
+						height: calc((100% + {cropTop}px + {cropBottom}px) / {iframeZoom});
+						transform: scale({iframeZoom});
+						transform-origin: 0 0;
+					"
+				></iframe>
+			</div>
 		</div>
-		<div class="iframe-wrapper">
-			<iframe
-				src={scoringUrl}
-				title="Live Scoring"
-				frameborder="0"
-				style="
-					margin-top: -{cropTop}px; 
-					width: {100 / iframeZoom}%;
-					height: calc((100% + {cropTop}px + {cropBottom}px) / {iframeZoom});
-					transform: scale({iframeZoom});
-					transform-origin: 0 0;
-				"
-			></iframe>
-		</div>
-	</div>
+	{:else}
+		<!-- Button to show iframe again when hidden -->
+		<button
+			class="show-iframe-btn"
+			on:click={() => (showIframe = true)}
+			title="Iframe anzeigen"
+		>
+			<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+		</button>
+	{/if}
 
 	<!-- SETTINGS MODAL -->
 	{#if editingCam}
@@ -1111,7 +1462,89 @@
 		background-color: #222;
 		box-sizing: border-box;
 		min-height: 10%;
-		max-height: 90%;
+		max-height: 98%;
+		position: relative; /* Für Overlay */
+	}
+
+	.ws-message-overlay {
+		position: absolute;
+		/* top/left set via inline styles */
+		transform: translate(-50%, 0); /* Nur X zentrieren relativ zum Punkt, Y ist Top */
+		z-index: 100;
+		max-width: 90%;
+		display: flex;
+		justify-content: center;
+	}
+
+	.ws-message-overlay.draggable {
+		cursor: move;
+		user-select: none;
+	}
+
+	.raw-message {
+		background: rgba(0, 0, 0, 0.7);
+		color: #0f0;
+		padding: 5px 10px;
+		border-radius: 4px;
+		font-family: monospace;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.scoreboard {
+		background: rgba(0, 0, 0, 0.85);
+		border: 1px solid #444;
+		border-radius: 8px;
+		padding: 10px;
+		color: white;
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
+		box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+	}
+
+	.match-info {
+		font-size: 0.8rem;
+		color: #aaa;
+		text-align: center;
+		margin-bottom: 5px;
+	}
+
+	.players {
+		display: flex;
+		gap: 20px;
+	}
+
+	.player {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		min-width: 100px;
+	}
+
+	.player .name {
+		font-weight: bold;
+		font-size: 1.1rem;
+		margin-bottom: 5px;
+	}
+
+	.player .score {
+		font-size: 2.5rem;
+		font-weight: bold;
+		color: #fff;
+		line-height: 1;
+	}
+
+	.player .stats {
+		font-size: 0.9rem;
+		color: #ccc;
+	}
+
+	.player .last-score {
+		font-size: 0.8rem;
+		color: #ffd700;
+		margin-top: 2px;
 	}
 
 	.cam-container {
@@ -1521,5 +1954,28 @@
 		background: #252525;
 		border-radius: 4px;
 		margin-bottom: 15px;
+	}
+
+	.show-iframe-btn {
+		position: fixed;
+		bottom: 20px;
+		right: 20px;
+		background: #333;
+		color: white;
+		border: none;
+		border-radius: 50%;
+		width: 50px;
+		height: 50px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		cursor: pointer;
+		box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+		z-index: 1000;
+		transition: background 0.3s;
+	}
+
+	.show-iframe-btn:hover {
+		background: #444;
 	}
 </style>

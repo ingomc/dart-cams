@@ -9,11 +9,7 @@ services:
       - "80"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dart-cams.rule=Host(`cams.ingomc.de`)"
-      - "traefik.http.routers.dart-cams.entrypoints=websecure"
-      - "traefik.http.routers.dart-cams.tls=true"
-      - "traefik.http.routers.dart-cams.tls.certresolver=letsencrypt" # Oder 'myresolver', je nach Traefik Config auf dem Server
-      - "traefik.http.services.dart-cams.loadbalancer.server.port=80"
+      - "traefik.docker.network=dokploy-network"
     networks:
       - dokploy-network
 

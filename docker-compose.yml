@@ -15,8 +15,8 @@ services:
       - "traefik.http.routers.dart-cams.tls.certresolver=letsencrypt" # Oder 'myresolver', je nach Traefik Config auf dem Server
       - "traefik.http.services.dart-cams.loadbalancer.server.port=80"
     networks:
-      - traefik-public # WICHTIG: Das muss das Netzwerk sein, in dem dein Traefik läuft
+      - dokploy-network
 
 networks:
-  traefik-public:
+  dokploy-network:
     external: true

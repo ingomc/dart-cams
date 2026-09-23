@@ -7,6 +7,10 @@ node_modules
 .wrangler
 /.svelte-kit
 /build
+/static/ocr/worker.min.js
+/static/ocr/core/
+/.bun-cache/
+/.npm-cache/
 
 # OS
 .DS_Store

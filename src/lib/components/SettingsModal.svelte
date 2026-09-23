@@ -1,8 +1,9 @@
 <script lang="ts">
-    import { createEventDispatcher } from "svelte";
+    import { createEventDispatcher, onDestroy } from "svelte";
     import type { CamSetting } from "../types";
     import { getTransformStyle, getMaskStyle, srcObject } from "../utils";
     import { defaultCamSettings } from "../constants";
+    import { alignDartboard } from "../boardAlignment";
 
     export let editingCam: "cam1" | "cam2";
     export let settings: CamSetting;
@@ -16,6 +17,67 @@
 
     let showMaskSettings = false;
     let showImageSettings = false;
+    let previewVideo: HTMLVideoElement;
+    let previewWidth = 0;
+    let previewHeight = 0;
+    let videoWidth = 0;
+    let videoHeight = 0;
+    let calibrating = false;
+    let alignmentMessage = "";
+    let previousSettings: CamSetting | null = null;
+    let requestId = 0;
+
+    onDestroy(() => { requestId++; });
+
+    async function autoAlign() {
+        if (!previewVideo || calibrating) return;
+        const id = ++requestId;
+        const source = videoSource;
+        const before = { ...settings };
+        calibrating = true;
+        alignmentMessage = "Dartboard wird gesucht …";
+        try {
+            const result = await alignDartboard(previewVideo);
+            if (id !== requestId || source !== videoSource) return;
+            if (!result) {
+                alignmentMessage = "Kein Dartboard erkannt. Bitte Board und Beleuchtung prüfen.";
+                return;
+            }
+            previousSettings = before;
+            const alignment = {
+                ...result.alignment,
+                topAngle: result.alignment.topAngle ?? before.autoAlignment?.topAngle ?? null,
+            };
+            settings = {
+                ...settings,
+                scale: 1,
+                scaleX: 1,
+                scaleY: 1,
+                rotate: result.alignment.topAngle === null ? before.rotate : 0,
+                x: 0,
+                y: 0,
+                perspective: defaultCamSettings.perspective,
+                rotateX: 0,
+                rotateY: 0,
+                skewX: 0,
+                skewY: 0,
+                autoAlignment: alignment,
+            };
+            alignmentMessage = result.warning ?? "Dartboard ausgerichtet und für diese Kamera gespeichert.";
+        } catch (error) {
+            console.error("Automatische Ausrichtung fehlgeschlagen:", error);
+            alignmentMessage = error instanceof Error ? error.message : "Ausrichtung fehlgeschlagen.";
+        } finally {
+            if (id === requestId) calibrating = false;
+        }
+    }
+
+    function undoAlignment() {
+        if (!previousSettings) return;
+        settings = previousSettings;
+        previousSettings = null;
+        alignmentMessage = "Vorherige Ausrichtung wiederhergestellt.";
+    }
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -30,20 +92,31 @@
         </div>
 
         <div class="modal-body">
-            <div class="preview-container" style={getMaskStyle(settings)}>
+            <div class="preview-container" style={getMaskStyle(settings)} bind:clientWidth={previewWidth} bind:clientHeight={previewHeight}>
                 <!-- svelte-ignore a11y-media-has-caption -->
                 <video
+                    bind:this={previewVideo}
                     use:srcObject={videoSource}
                     autoplay
                     playsinline
                     muted
-                    style={getTransformStyle(settings, editingCam)}
+                    on:loadedmetadata={() => { videoWidth = previewVideo.videoWidth; videoHeight = previewVideo.videoHeight; }}
+                    on:resize={() => { videoWidth = previewVideo.videoWidth; videoHeight = previewVideo.videoHeight; }}
+                    style={getTransformStyle(settings, editingCam, { width: previewWidth, height: previewHeight, videoWidth, videoHeight })}
                 ></video>
                 <!-- Hilfskreis für Dartboard -->
-                <div class="guide-circle"></div>
+                <div class="guide-circle" style="width: {Math.min(previewWidth, previewHeight) * 0.7}px; height: {Math.min(previewWidth, previewHeight) * 0.7}px;"></div>
             </div>
 
             <div class="controls-panel">
+                <button class="align-btn" on:click={autoAlign} disabled={calibrating || !videoSource}>
+                    {calibrating ? "Ausrichtung läuft …" : "Dartboard automatisch ausrichten"}
+                </button>
+                {#if previousSettings}
+                    <button class="undo-btn" on:click={undoAlignment} disabled={calibrating}>Ausrichtung rückgängig machen</button>
+                {/if}
+                {#if alignmentMessage}<p class="alignment-message" role="status">{alignmentMessage}</p>{/if}
+                <hr />
                 <!-- svelte-ignore a11y-label-has-associated-control -->
                 <div class="control-group">
                     <label>Scale ({settings.scale})</label>
@@ -192,8 +265,9 @@
                 {#if showImageSettings}
                     <div class="collapsible-content">
                         <div class="control-group">
-                            <label>Helligkeit ({settings.brightness}%)</label>
+                            <label for="brightness">Helligkeit ({settings.brightness}%)</label>
                             <input
+                                id="brightness"
                                 type="range"
                                 min="0"
                                 max="200"
@@ -202,8 +276,9 @@
                             />
                         </div>
                         <div class="control-group">
-                            <label>Kontrast ({settings.contrast}%)</label>
+                            <label for="contrast">Kontrast ({settings.contrast}%)</label>
                             <input
+                                id="contrast"
                                 type="range"
                                 min="0"
                                 max="200"
@@ -212,8 +287,9 @@
                             />
                         </div>
                         <div class="control-group">
-                            <label>Sättigung ({settings.saturate}%)</label>
+                            <label for="saturate">Sättigung ({settings.saturate}%)</label>
                             <input
+                                id="saturate"
                                 type="range"
                                 min="0"
                                 max="200"
@@ -222,8 +298,9 @@
                             />
                         </div>
                         <div class="control-group">
-                            <label>Schärfe ({settings.sharpness})</label>
+                            <label for="sharpness">Schärfe ({settings.sharpness})</label>
                             <input
+                                id="sharpness"
                                 type="range"
                                 min="0"
                                 max="100"
@@ -305,6 +382,8 @@
                     class="reset-btn"
                     on:click={() => {
                         settings = { ...defaultCamSettings };
+                        previousSettings = null;
+                        alignmentMessage = "Einstellungen zurückgesetzt.";
                     }}>Reset</button
                 >
             </div>
@@ -433,6 +512,20 @@
         border-radius: 4px;
         cursor: pointer;
     }
+
+    .align-btn, .undo-btn {
+        width: 100%;
+        padding: 10px;
+        border: 0;
+        border-radius: 4px;
+        color: white;
+        cursor: pointer;
+        margin-bottom: 8px;
+    }
+    .align-btn { background: #1976d2; }
+    .undo-btn { background: #555; }
+    .align-btn:disabled, .undo-btn:disabled { opacity: 0.55; cursor: default; }
+    .alignment-message { color: #ddd; font-size: 0.9rem; line-height: 1.4; }
 
     .reset-btn:hover {
         background: #b71c1c;

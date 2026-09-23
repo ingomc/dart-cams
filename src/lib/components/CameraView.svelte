@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createEventDispatcher } from "svelte";
+    import { createEventDispatcher, onDestroy } from "svelte";
     import Scoreboard from "./Scoreboard.svelte";
     import type { MatchData, CamSetting } from "../types";
     import {
@@ -25,10 +25,24 @@
     const dispatch = createEventDispatcher();
 
     let showControls = false;
+    let viewportWidth = 0;
+    let viewportHeight = 0;
+    let videoWidth = 0;
+    let videoHeight = 0;
+    let streamError = "";
+    let activeStream: MediaStream | null = null;
+    let streamRequest = 0;
+
+    onDestroy(() => {
+        streamRequest++;
+        activeStream?.getTracks().forEach((track) => track.stop());
+    });
 
     // Stream logic
     async function startStream(deviceId: string, el: HTMLVideoElement) {
+        const request = ++streamRequest;
         if (!deviceId || !el) return;
+        streamError = "";
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: {
@@ -37,9 +51,16 @@
                     height: 720,
                 },
             });
+            if (request !== streamRequest) {
+                stream.getTracks().forEach((track) => track.stop());
+                return;
+            }
+            activeStream?.getTracks().forEach((track) => track.stop());
+            activeStream = stream;
             el.srcObject = stream;
         } catch (err) {
             console.error("Fehler beim Starten des Streams:", err);
+            if (request === streamRequest) streamError = "Kamerastream nicht verfügbar. Gerät oder Berechtigung prüfen.";
         }
     }
 
@@ -165,14 +186,17 @@
             >
         </button>
     </div>
-    <div class="video-wrapper" style={getMaskStyle(settings)}>
+    <div class="video-wrapper" style={getMaskStyle(settings)} bind:clientWidth={viewportWidth} bind:clientHeight={viewportHeight}>
+        {#if streamError}<p class="camera-error" role="alert">{streamError}</p>{/if}
         <!-- svelte-ignore a11y-media-has-caption -->
         <video
             bind:this={videoElement}
             autoplay
             playsinline
             muted
-            style={getTransformStyle(settings, camId)}
+            on:loadedmetadata={() => { videoWidth = videoElement?.videoWidth ?? 0; videoHeight = videoElement?.videoHeight ?? 0; }}
+            on:resize={() => { videoWidth = videoElement?.videoWidth ?? 0; videoHeight = videoElement?.videoHeight ?? 0; }}
+            style={getTransformStyle(settings, camId, { width: viewportWidth, height: viewportHeight, videoWidth, videoHeight })}
         ></video>
     </div>
     <div class="cam-label {camId === 'cam1' ? 'left' : 'right'}">
@@ -227,6 +251,15 @@
         align-items: center;
         overflow: hidden;
         position: relative;
+    }
+
+    .camera-error {
+        position: absolute;
+        z-index: 2;
+        padding: 12px;
+        text-align: center;
+        color: white;
+        background: rgba(0, 0, 0, 0.75);
     }
 
     video {

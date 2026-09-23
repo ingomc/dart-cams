@@ -8,6 +8,8 @@
 
 	// Zustand für verfügbare Geräte und ausgewählte IDs
 	let videoDevices: MediaDeviceInfo[] = [];
+	let cameraError = "";
+	let checkingCameras = false;
 	let selectedCam1 = "";
 	let selectedCam2 = "";
 	let cam1Label = "Heim";
@@ -257,7 +259,7 @@
 		}
 
 		getDevices();
-		navigator.mediaDevices.ondevicechange = getDevices;
+		navigator.mediaDevices?.addEventListener("devicechange", getDevices);
 
 		window.addEventListener("mousemove", handleMove);
 		window.addEventListener("mouseup", handleEnd);
@@ -274,6 +276,7 @@
 
 	onDestroy(() => {
 		if (typeof window !== "undefined") {
+			navigator.mediaDevices?.removeEventListener("devicechange", getDevices);
 			window.removeEventListener("mousemove", handleMove);
 			window.removeEventListener("mouseup", handleEnd);
 			window.removeEventListener("touchmove", handleMove);
@@ -287,12 +290,20 @@
 	});
 
 	async function getDevices() {
+		if (checkingCameras) return;
+		checkingCameras = true;
+		cameraError = "";
+		let permissionStream: MediaStream | null = null;
 		try {
-			await navigator.mediaDevices.getUserMedia({ video: true });
-			const devices = await navigator.mediaDevices.enumerateDevices();
+			let devices = await navigator.mediaDevices.enumerateDevices();
+			if (!devices.some((device) => device.kind === "videoinput" && device.label)) {
+				permissionStream = await navigator.mediaDevices.getUserMedia({ video: true });
+				devices = await navigator.mediaDevices.enumerateDevices();
+			}
 			videoDevices = devices.filter(
 				(device) => device.kind === "videoinput",
 			);
+			if (!videoDevices.length) cameraError = "Keine Kamera gefunden. Anschluss und Browserberechtigung prüfen.";
 
 			const savedSelections = localStorage.getItem("dartCamSelections");
 			let savedCam1 = "";
@@ -313,8 +324,8 @@
 				videoDevices.some((d) => d.deviceId === savedCam1)
 			) {
 				selectedCam1 = savedCam1;
-			} else if (videoDevices.length > 0 && !selectedCam1) {
-				selectedCam1 = videoDevices[0].deviceId;
+			} else if (!videoDevices.some((d) => d.deviceId === selectedCam1)) {
+				selectedCam1 = videoDevices[0]?.deviceId ?? "";
 			}
 
 			if (
@@ -322,12 +333,15 @@
 				videoDevices.some((d) => d.deviceId === savedCam2)
 			) {
 				selectedCam2 = savedCam2;
-			} else if (videoDevices.length > 1 && !selectedCam2) {
-				selectedCam2 = videoDevices[1].deviceId;
+			} else if (!videoDevices.some((d) => d.deviceId === selectedCam2)) {
+				selectedCam2 = videoDevices[1]?.deviceId ?? "";
 			}
 		} catch (err) {
 			console.error("Fehler beim Zugriff auf Kameras:", err);
-			alert("Kamerazugriff verweigert oder nicht möglich.");
+			cameraError = "Kamerazugriff nicht möglich. Bitte Browserberechtigung prüfen und erneut versuchen.";
+		} finally {
+			permissionStream?.getTracks().forEach((track) => track.stop());
+			checkingCameras = false;
 		}
 	}
 
@@ -455,6 +469,12 @@
 	class="container"
 	class:dragging={isDraggingVertical || isDraggingHorizontal}
 >
+	{#if cameraError}
+		<div class="camera-notice" role="alert">
+			<span>{cameraError}</span>
+			<button on:click={getDevices} disabled={checkingCameras}>Erneut versuchen</button>
+		</div>
+	{/if}
 	<!-- OBERER BEREICH: KAMERAS -->
 	<div
 		class="camera-section"
@@ -564,6 +584,21 @@
 	.container.dragging {
 		user-select: none;
 		cursor: grabbing;
+	}
+
+	.camera-notice {
+		position: absolute;
+		z-index: 200;
+		left: 50%;
+		top: 8px;
+		transform: translateX(-50%);
+		padding: 8px 12px;
+		background: #542020;
+		border: 1px solid #a94c4c;
+		border-radius: 4px;
+		display: flex;
+		gap: 12px;
+		align-items: center;
 	}
 
 	.camera-section {

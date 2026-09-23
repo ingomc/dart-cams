@@ -1,12 +1,12 @@
-<script>
+<script lang="ts">
 	import { onMount, onDestroy } from "svelte";
 
-	export let videoDevices = [];
+	export let videoDevices: MediaDeviceInfo[] = [];
 	export let visible = false;
 
-	let videoElement;
+	let videoElement: HTMLVideoElement;
 	let selectedDeviceId = "";
-	let stream = null;
+	let stream: MediaStream | null = null;
 
 	// Position and Size
 	let x = 20;
@@ -75,14 +75,15 @@
 	}
 
 	// Dragging Logic
-	function startDrag(e) {
-		if (e.target.closest(".controls") || e.target.closest(".resizer"))
+	function startDrag(e: MouseEvent | TouchEvent) {
+		const target = e.target as HTMLElement | null;
+		if (target?.closest(".controls") || target?.closest(".resizer"))
 			return;
 		if (e.type === "touchstart") e.preventDefault();
 
 		isDragging = true;
 
-		if (e.touches) {
+		if ("touches" in e) {
 			dragStartX = e.touches[0].clientX;
 			dragStartY = e.touches[0].clientY;
 		} else {
@@ -95,13 +96,13 @@
 	}
 
 	// Resizing Logic
-	function startResize(e) {
+	function startResize(e: MouseEvent | TouchEvent) {
 		e.stopPropagation();
 		if (e.type === "touchstart") e.preventDefault();
 
 		isResizing = true;
 
-		if (e.touches) {
+		if ("touches" in e) {
 			resizeStartX = e.touches[0].clientX;
 			resizeStartY = e.touches[0].clientY;
 		} else {
@@ -113,12 +114,12 @@
 		initialHeight = height;
 	}
 
-	function handleMove(e) {
+	function handleMove(e: MouseEvent | TouchEvent) {
 		if (isDragging) {
 			if (e.type === "touchmove") e.preventDefault();
 
 			let clientX, clientY;
-			if (e.touches) {
+			if ("touches" in e) {
 				clientX = e.touches[0].clientX;
 				clientY = e.touches[0].clientY;
 			} else {
@@ -134,7 +135,7 @@
 			if (e.type === "touchmove") e.preventDefault();
 
 			let clientX, clientY;
-			if (e.touches) {
+			if ("touches" in e) {
 				clientX = e.touches[0].clientX;
 				clientY = e.touches[0].clientY;
 			} else {

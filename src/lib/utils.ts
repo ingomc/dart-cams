@@ -1,11 +1,12 @@
 import type { CamSetting } from './types';
+import { boardAlignmentMatrix, type ViewportSize } from './boardAlignmentGeometry';
 
 export function getSharpenKernel(amount: number) {
     const s = amount / 100;
     return `0 ${-s} 0 ${-s} ${1 + 4 * s} ${-s} 0 ${-s} 0`;
 }
 
-export function getTransformStyle(settings: CamSetting, camId: string) {
+export function getTransformStyle(settings: CamSetting, camId: string, view?: ViewportSize) {
     const persp =
         settings.perspective > 0
             ? `perspective(${settings.perspective}px)`
@@ -25,14 +26,35 @@ export function getTransformStyle(settings: CamSetting, camId: string) {
         filter += ` url(#sharpen-${camId})`;
     }
 
-    return `transform: 
+    const alignment = settings.autoAlignment && view
+        ? boardAlignmentMatrix(settings.autoAlignment, view)
+        : null;
+    const autoMatrix = alignment
+        ? `matrix3d(${alignment[0]}, ${alignment[3]}, 0, ${alignment[6]},
+                    ${alignment[1]}, ${alignment[4]}, 0, ${alignment[7]},
+                    0, 0, 1, 0,
+                    ${alignment[2]}, ${alignment[5]}, 0, ${alignment[8]})`
+        : '';
+    const centeredManual = alignment && view
+        ? `translate(${view.width / 2}px, ${view.height / 2}px)
+           rotate(${settings.rotate}deg)
+           scale(${sx}, ${sy})
+           rotateX(${settings.rotateX}deg)
+           rotateY(${settings.rotateY}deg)
+           skew(${settings.skewX}deg, ${settings.skewY}deg)
+           translate(${-view.width / 2}px, ${-view.height / 2}px)
+           ${autoMatrix}`
+        : null;
+
+    return `transform-origin: ${alignment ? '0 0' : 'center center'};
+        transform: ${centeredManual ? `translate(${settings.x}px, ${settings.y}px) ${persp} ${centeredManual}` : `
         ${persp}
         translate(${settings.x}px, ${settings.y}px)
         rotate(${settings.rotate}deg) 
         scale(${sx}, ${sy}) 
         rotateX(${settings.rotateX}deg)
         rotateY(${settings.rotateY}deg)
-        skew(${settings.skewX}deg, ${settings.skewY}deg);
+        skew(${settings.skewX}deg, ${settings.skewY}deg)`};
         filter: ${filter};`;
 }
 

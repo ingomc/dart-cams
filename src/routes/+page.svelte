@@ -3,7 +3,9 @@
 	import CameraView from "$lib/components/CameraView.svelte";
 	import IframeSection from "$lib/components/IframeSection.svelte";
 	import { defaultCamSettings } from "$lib/constants";
-	import type { CamSettings, CamSetting, MatchData } from "$lib/types";
+	import { LiveScoringClient, type ScoringStatus } from "$lib/liveScoring";
+	import { parseScoringEventUrl, type LiveMatch } from "$lib/scoring";
+	import type { CamSettings, CamSetting } from "$lib/types";
 
 	// Zustand für verfügbare Geräte und ausgewählte IDs
 	let videoDevices: MediaDeviceInfo[] = [];
@@ -15,19 +17,24 @@
 	let cam2Label = "Gast";
 	let showFloatingWebcam = false;
 
-	// URL für das 2K Live Scoring
-	let scoringUrl =
-		"https://www.2k-dart-software.com/frontend/events/5/mandant/1744";
+	let scoringUrl = "";
+	let scoringUrlDraft = "";
+	let scoringError = "";
+	let scoringStatus: ScoringStatus = 'idle';
+	let matches: LiveMatch[] = [];
+	let scoringClient: LiveScoringClient | null = null;
+	let activeEventKey = "";
 
 	let container1: HTMLElement;
 	let container2: HTMLElement;
+	let contentArea: HTMLElement;
 
 	// Layout State
 	let topHeight = 50; // in %
 	let leftWidth = 50; // in %
 	let isDraggingVertical = false;
 	let isDraggingHorizontal = false;
-	let showIframe = true;
+	let showIframe = false;
 
 	// Iframe Settings
 	let cropTop = 0;
@@ -44,15 +51,6 @@
 
 	let editingCam: "cam1" | "cam2" | null = null;
 
-	// WebSocket State
-	let ws: WebSocket | null = null;
-	let wsMessage: string | null = "Kein WebSocket";
-	let wsUrl = "";
-
-	let matches: MatchData["match"][] = [];
-	let databaseId = "";
-	let groupKey = "";
-
 	// Scoreboard State per Camera
 	let cam1BoardKey = "";
 	let cam2BoardKey = "";
@@ -64,32 +62,40 @@
 	let isDraggingScore1 = false;
 	let isDraggingScore2 = false;
 
-	// Reaktivität: Wenn Scoring URL sich ändert, Matches laden
-	$: if (scoringUrl) {
-		const match = scoringUrl.match(/event\/(\d+)\/(\d+)/);
-		if (match) {
-			databaseId = match[1];
-			groupKey = match[2];
-			fetchMatches();
+	const scoringStatusText: Record<ScoringStatus, string> = {
+		idle: 'Kein Event verbunden',
+		connecting: 'Verbinde…',
+		live: 'Live verbunden',
+		offline: 'Verbindung unterbrochen – letzter Stand',
+		error: 'Scoring derzeit nicht erreichbar',
+	};
 
-			// Automatisch WS URL setzen
-			const baseUrl =
-				"wss://live-backend.2k-dart-software.com/dartsscorer-liveticker/api/v1/websocket";
-			const serverId = Math.floor(Math.random() * 1000)
-				.toString()
-				.padStart(3, "0");
-			const sessionId = Math.random().toString(36).substring(2, 10);
-			const newWsUrl = `${baseUrl}/${serverId}/${sessionId}/websocket`;
-
-			if (wsUrl !== newWsUrl) {
-				wsUrl = newWsUrl;
-			}
+	function activateScoringUrl(value: string): void {
+		const event = parseScoringEventUrl(value);
+		if (!event) {
+			scoringError = 'Bitte einen 3K-Live-Link im Format https://live.3k-darts.com/event/5/2995582 eingeben.';
+			return;
 		}
+		scoringError = '';
+		scoringUrl = event.url;
+		scoringUrlDraft = event.url;
+		activeEventKey = event.key;
+		try {
+			const stored = JSON.parse(localStorage.getItem(`dartScoringBoards:${event.key}`) ?? '{}');
+			cam1BoardKey = typeof stored.cam1 === 'string' ? stored.cam1 : '';
+			cam2BoardKey = typeof stored.cam2 === 'string' ? stored.cam2 : '';
+		} catch {
+			cam1BoardKey = '';
+			cam2BoardKey = '';
+		}
+		localStorage.setItem('dartScoringEventUrl', event.url);
+		scoringClient?.start(event);
 	}
 
-	// Reaktivität: Wenn wsUrl oder IDs sich ändern, verbinden
-	$: if (wsUrl && databaseId && groupKey) {
-		connectWs(wsUrl);
+	function saveBoardSelection(): void {
+		if (!activeEventKey) return;
+		localStorage.setItem(`dartScoringBoards:${activeEventKey}`,
+			JSON.stringify({ cam1: cam1BoardKey, cam2: cam2BoardKey }));
 	}
 
 	// Drag Logic for Scoreboards
@@ -112,25 +118,17 @@
 			clientY = (e as MouseEvent).clientY;
 		}
 
-		if (isDraggingScore1 && container1) {
-			const rect = container1.getBoundingClientRect();
-			const x = ((clientX - rect.left) / rect.width) * 100;
-			const y = ((clientY - rect.top) / rect.height) * 100;
-			cam1ScorePos = {
-				x: Math.max(0, Math.min(100, x)),
-				y: Math.max(0, Math.min(100, y)),
-			};
-		}
-
-		if (isDraggingScore2 && container2) {
-			const rect = container2.getBoundingClientRect();
-			const x = ((clientX - rect.left) / rect.width) * 100;
-			const y = ((clientY - rect.top) / rect.height) * 100;
-			cam2ScorePos = {
-				x: Math.max(0, Math.min(100, x)),
-				y: Math.max(0, Math.min(100, y)),
-			};
-		}
+		const container = isDraggingScore1 ? container1 : container2;
+		if (!container) return;
+		const rect = container.getBoundingClientRect();
+		const overlay = container.querySelector<HTMLElement>('.ws-message-overlay');
+		const halfWidth = (overlay?.offsetWidth ?? 0) / 2;
+		const height = overlay?.offsetHeight ?? 0;
+		const x = Math.max(halfWidth, Math.min(rect.width - halfWidth, clientX - rect.left));
+		const y = Math.max(0, Math.min(rect.height - height, clientY - rect.top));
+		const next = { x: x / rect.width * 100, y: y / rect.height * 100 };
+		if (isDraggingScore1) cam1ScorePos = next;
+		else cam2ScorePos = next;
 	}
 
 	function handleScoreEnd() {
@@ -138,101 +136,13 @@
 		isDraggingScore2 = false;
 	}
 
-	async function fetchMatches() {
-		if (!databaseId || !groupKey) return;
-		try {
-			const res = await fetch(
-				`https://live-backend.2k-dart-software.com/dartsscorer-liveticker/api/v1/match/${databaseId}/0/${groupKey}`,
-			);
-			const json = await res.json();
-			if (json && json.data) {
-				matches = json.data;
-			}
-		} catch (e) {
-			console.error("Fehler beim Laden der Matches:", e);
-		}
-	}
-
-	function connectWs(url: string) {
-		if (ws) {
-			ws.close();
-		}
-		try {
-			console.log("Verbinde zu WebSocket:", url);
-			ws = new WebSocket(url);
-
-			ws.onopen = () => {
-				wsMessage = "Verbunden. Abonniere...";
-				ws?.send(
-					'["CONNECT\\naccept-version:1.1,1.0\\nheart-beat:10000,10000\\n\\n\\u0000"]',
-				);
-			};
-
-			ws.onmessage = (event) => {
-				const data = event.data;
-				if (data === 'a["\\n"]') return;
-
-				if (typeof data === "string" && data.startsWith('a["')) {
-					try {
-						const inner = JSON.parse(data.substring(1));
-						if (Array.isArray(inner) && inner.length > 0) {
-							const stompMessage = inner[0];
-
-							if (stompMessage.startsWith("CONNECTED")) {
-								wsMessage = "Verbunden. Warte auf Daten...";
-								const topic = `/topic/${databaseId}-${groupKey}`;
-								const subId = "sub-0";
-								const subFrame = `["SUBSCRIBE\\nid:${subId}\\ndestination:${topic}\\n\\n\\u0000"]`;
-								ws?.send(subFrame);
-								return;
-							}
-
-							const bodyStart = stompMessage.indexOf("\n\n");
-							if (bodyStart !== -1) {
-								let jsonStr = stompMessage.substring(
-									bodyStart + 2,
-								);
-								if (jsonStr.endsWith("\u0000")) {
-									jsonStr = jsonStr.substring(
-										0,
-										jsonStr.length - 1,
-									);
-								}
-								const parsed = JSON.parse(jsonStr);
-
-								if (parsed && parsed.match) {
-									const idx = matches.findIndex(
-										(m) =>
-											m.matchKey ===
-											parsed.match.matchKey,
-									);
-									if (idx !== -1) {
-										matches[idx] = parsed.match;
-									}
-								}
-							}
-						}
-					} catch (e) {
-						console.error("Parse error:", e);
-					}
-				}
-			};
-
-			ws.onerror = (error) => {
-				console.error("WebSocket Fehler:", error);
-				wsMessage = "Fehler bei Verbindung";
-			};
-
-			ws.onclose = () => {
-				wsMessage = "Verbindung getrennt";
-			};
-		} catch (e) {
-			console.error("Konnte WebSocket nicht erstellen:", e);
-			wsMessage = "Ungültige URL";
-		}
-	}
-
 	onMount(() => {
+		scoringClient = new LiveScoringClient({
+			onMatches: (next) => (matches = next),
+			onStatus: (next) => (scoringStatus = next),
+		});
+		const savedScoringUrl = localStorage.getItem('dartScoringEventUrl');
+		if (savedScoringUrl) activateScoringUrl(savedScoringUrl);
 		const saved = localStorage.getItem("dartCamSettings");
 		if (saved) {
 			try {
@@ -270,6 +180,7 @@
 	});
 
 	onDestroy(() => {
+		scoringClient?.stop();
 		if (typeof window !== "undefined") {
 			navigator.mediaDevices?.removeEventListener("devicechange", getDevices);
 			window.removeEventListener("mousemove", handleMove);
@@ -367,7 +278,8 @@
 		}
 
 		if (isDraggingVertical) {
-			const h = (clientY / window.innerHeight) * 100;
+			const rect = contentArea.getBoundingClientRect();
+			const h = ((clientY - rect.top) / rect.height) * 100;
 			if (h > 10 && h < 90) topHeight = h;
 		}
 		if (isDraggingHorizontal) {
@@ -457,6 +369,22 @@
 			<button on:click={getDevices} disabled={checkingCameras}>Erneut versuchen</button>
 		</div>
 	{/if}
+	<form class="scoring-bar" on:submit|preventDefault={() => activateScoringUrl(scoringUrlDraft)}>
+		<label for="scoring-event-url">3K-Live-Event</label>
+		<input id="scoring-event-url" type="text" inputmode="url" bind:value={scoringUrlDraft}
+			placeholder="https://live.3k-darts.com/event/5/2995582" spellcheck="false" />
+		<button type="submit">Verbinden</button>
+		<span class="scoring-status" class:live={scoringStatus === 'live'}
+			class:warning={scoringStatus === 'offline' || scoringStatus === 'error'} aria-live="polite">
+			{scoringStatusText[scoringStatus]}{scoringUrl && matches.length ? ` · ${matches.length} Match${matches.length === 1 ? '' : 'es'}` : ''}
+		</span>
+		<button type="button" class="secondary-btn" disabled={!scoringUrl}
+			on:click={() => (showIframe = !showIframe)}>{showIframe ? 'Live-Ansicht schließen' : 'Live-Ansicht öffnen'}</button>
+		<button type="button" class="secondary-btn" on:click={() => (showFloatingWebcam = !showFloatingWebcam)}
+			aria-pressed={showFloatingWebcam}>{showFloatingWebcam ? 'Webcam schließen' : 'Webcam öffnen'}</button>
+	</form>
+	{#if scoringError}<p class="scoring-error" role="alert">{scoringError}</p>{/if}
+	<div class="content-area" bind:this={contentArea}>
 	<!-- OBERER BEREICH: KAMERAS -->
 	<div
 		class="camera-section"
@@ -473,8 +401,10 @@
 			bind:containerElement={container1}
 			bind:boardKey={cam1BoardKey}
 			bind:scorePos={cam1ScorePos}
+			scoringStatus={scoringStatus}
 			{videoDevices}
 			{matches}
+			on:boardChange={(event) => { cam1BoardKey = event.detail.board; saveBoardSelection(); }}
 			on:editStart={() => (editingCam = "cam1")}
 			on:editEnd={() => (editingCam = null)}
 			on:scoreDragStart={(e) => startScoreDrag(1, e.detail.originalEvent)}
@@ -499,8 +429,10 @@
 			bind:containerElement={container2}
 			bind:boardKey={cam2BoardKey}
 			bind:scorePos={cam2ScorePos}
+			scoringStatus={scoringStatus}
 			{videoDevices}
 			{matches}
+			on:boardChange={(event) => { cam2BoardKey = event.detail.board; saveBoardSelection(); }}
 			on:editStart={() => (editingCam = "cam2")}
 			on:editEnd={() => (editingCam = null)}
 			on:scoreDragStart={(e) => startScoreDrag(2, e.detail.originalEvent)}
@@ -519,14 +451,12 @@
 
 	<!-- UNTERER BEREICH: IFRAME -->
 	<IframeSection
-		bind:scoringUrl
-		bind:wsUrl
+		{scoringUrl}
 		bind:cropTop
 		bind:cropBottom
 		bind:iframeZoom
 		bind:showFloatingWebcam
-		bind:showIframe
-		{matches}
+		{showIframe}
 		{videoDevices}
 	>
 		<div slot="overlay">
@@ -535,6 +465,7 @@
 			{/if}
 		</div>
 	</IframeSection>
+	</div>
 
 </main>
 
@@ -561,6 +492,46 @@
 		cursor: grabbing;
 	}
 
+	.scoring-bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 10px;
+		background: #292929;
+		border-bottom: 1px solid #464646;
+	}
+
+	.scoring-bar label { font-weight: 700; white-space: nowrap; }
+	.scoring-bar input {
+		flex: 1 1 320px;
+		min-width: 180px;
+		min-height: 42px;
+		box-sizing: border-box;
+		padding: 8px 10px;
+		background: #171717;
+		border: 1px solid #666;
+		border-radius: 6px;
+		color: white;
+	}
+	.scoring-bar button {
+		min-height: 42px;
+		padding: 0 14px;
+		border: 1px solid #2877b8;
+		border-radius: 6px;
+		background: #1262a0;
+		color: white;
+		font-weight: 700;
+		cursor: pointer;
+	}
+	.scoring-bar button.secondary-btn { background: #3a3a3a; border-color: #666; }
+	.scoring-bar button:disabled { opacity: 0.45; cursor: default; }
+	.scoring-status { color: #d2d2d2; font-size: 0.85rem; white-space: nowrap; }
+	.scoring-status.live { color: #82dda8; }
+	.scoring-status.warning { color: #ffc17c; }
+	.scoring-error { margin: 0; padding: 5px 10px; background: #542020; color: #fff; }
+	.content-area { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+
 	.camera-notice {
 		position: absolute;
 		z-index: 200;
@@ -578,11 +549,11 @@
 
 	.camera-section {
 		display: flex;
+		flex: none;
 		padding: 5px;
 		background-color: #222;
 		box-sizing: border-box;
-		min-height: 10%;
-		max-height: 98%;
+		min-height: 0;
 		position: relative;
 	}
 

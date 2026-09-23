@@ -1,8 +1,10 @@
 <script lang="ts">
     import { createEventDispatcher, onDestroy } from "svelte";
-    import Scoreboard from "./Scoreboard.svelte";
+    import LiveScoreboard from "./LiveScoreboard.svelte";
     import CameraEditor from "./CameraEditor.svelte";
     import type { MatchData, CamSetting } from "../types";
+    import type { ScoringStatus } from "../liveScoring";
+    import { listBoards, matchForBoard } from "../scoring";
     import { editDraft } from "../manualEdit";
     import {
         getTransformStyle,
@@ -18,6 +20,7 @@
     export let videoDevices: MediaDeviceInfo[];
     export let matches: MatchData["match"][];
     export let boardKey: string;
+    export let scoringStatus: ScoringStatus;
     export let scorePos: { x: number; y: number };
     export let editLocked = false;
 
@@ -38,6 +41,7 @@
     let draft: CamSetting | null = null;
     let editingDeviceId = '';
     $: displayedSettings = draft ?? settings;
+    $: availableBoards = listBoards(matches, [boardKey]);
     $: if (draft && editingDeviceId && selectedDeviceId !== editingDeviceId) cancelEdit();
 
     onDestroy(() => {
@@ -73,12 +77,6 @@
 
     $: if (selectedDeviceId && videoElement) {
         startStream(selectedDeviceId, videoElement);
-    }
-
-    function getMatchData(key: string): MatchData | null {
-        if (!key) return null;
-        const m = matches.find((x) => x.matchKey === key);
-        return m ? { match: m } : null;
     }
 
     function handleScoreDragStart(e: MouseEvent | TouchEvent) {
@@ -127,8 +125,8 @@
 >
     <!-- Scoreboard Overlay -->
     {#if boardKey && !draft}
-        {@const data = getMatchData(boardKey)}
-        {#if data}
+        {@const selectedMatch = matchForBoard(matches, boardKey)}
+        {#if selectedMatch}
             <!-- svelte-ignore a11y-no-static-element-interactions -->
             <div
                 class="ws-message-overlay draggable"
@@ -136,8 +134,10 @@
                 on:mousedown={handleScoreDragStart}
                 on:touchstart={handleScoreDragStart}
             >
-                <Scoreboard {data} />
+                <LiveScoreboard data={{ match: selectedMatch }} stale={scoringStatus !== 'live'} />
             </div>
+        {:else}
+            <div class="no-match" role="status">Board {boardKey}: {scoringStatus === 'connecting' ? 'Lade Match…' : 'Kein aktives Match'}</div>
         {/if}
     {/if}
 
@@ -156,19 +156,21 @@
             {/each}
         </select>
 
-        {#if matches.length > 0}
+        {#if scoringStatus !== 'idle' || boardKey}
             <label for="board-select-{camId}" style="margin-left: 10px;"
                 >Board:</label
             >
             <select
                 id="board-select-{camId}"
                 bind:value={boardKey}
+                on:change={(event) => dispatch('boardChange', { board: event.currentTarget.value })}
                 disabled={!showControls}
-                style="max-width: 100px;"
+                style="max-width: 190px;"
             >
                 <option value="">Keins</option>
-                {#each matches as match}
-                    <option value={match.matchKey}>B{match.board}</option>
+                {#each availableBoards as board}
+                    {@const match = matchForBoard(matches, board)}
+                    <option value={board}>B{board}{match ? ` · ${match.matchPlayers.map((player) => player.playerName).join(' / ')}` : ' · kein Match'}</option>
                 {/each}
             </select>
         {/if}
@@ -373,7 +375,8 @@
         position: absolute;
         transform: translate(-50%, 0);
         z-index: 100;
-        max-width: 90%;
+        width: min(94%, 560px);
+        max-width: 96%;
         display: flex;
         justify-content: center;
     }
@@ -381,5 +384,18 @@
     .ws-message-overlay.draggable {
         cursor: move;
         user-select: none;
+        touch-action: none;
+    }
+
+    .no-match {
+        position: absolute;
+        z-index: 9;
+        top: 58px;
+        right: 10px;
+        padding: 7px 10px;
+        border-radius: 5px;
+        background: rgba(0, 0, 0, 0.75);
+        color: #ddd;
+        font-size: 0.85rem;
     }
 </style>

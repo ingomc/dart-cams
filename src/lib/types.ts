@@ -50,7 +50,9 @@ export interface MatchPlayer {
     points: number;
     legs: number;
     sets: number;
-    darts: string;
+    /** Darts thrown in the current leg; the feed also provides dartsTotal for the match. */
+    darts: number | string;
+    dartsTotal?: number;
     lastScore: number;
 }
 
@@ -61,6 +63,12 @@ export interface MatchData {
         mode: string;
         roundName: string;
         groupName: string;
-        board?: number; // Added board as it was used in code
+        board?: number | string;
+        vbName?: string;
+        setsHome?: number;
+        setsGuest?: number;
+        legsHome?: number;
+        legsGuest?: number;
+        currentplayerIndex?: number;
     };
 }

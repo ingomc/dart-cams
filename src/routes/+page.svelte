@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from "svelte";
 	import CameraView from "$lib/components/CameraView.svelte";
-	import SettingsModal from "$lib/components/SettingsModal.svelte";
 	import IframeSection from "$lib/components/IframeSection.svelte";
 	import { defaultCamSettings } from "$lib/constants";
 	import type { CamSettings, CamSetting, MatchData } from "$lib/types";
@@ -20,9 +19,6 @@
 	let scoringUrl =
 		"https://www.2k-dart-software.com/frontend/events/5/mandant/1744";
 
-	// Referenzen zu den HTML Video Elementen (gebunden aus CameraView)
-	let videoElem1: HTMLVideoElement;
-	let videoElem2: HTMLVideoElement;
 	let container1: HTMLElement;
 	let container2: HTMLElement;
 
@@ -47,7 +43,6 @@
 	let isLoadingSettings = { cam1: false, cam2: false };
 
 	let editingCam: "cam1" | "cam2" | null = null;
-	let editVideoSource: MediaProvider | null = null;
 
 	// WebSocket State
 	let ws: WebSocket | null = null;
@@ -386,19 +381,6 @@
 		isDraggingHorizontal = false;
 	}
 
-	function openSettings(camId: "cam1" | "cam2") {
-		editingCam = camId;
-		if (camId === "cam1" && videoElem1)
-			editVideoSource = videoElem1.srcObject;
-		if (camId === "cam2" && videoElem2)
-			editVideoSource = videoElem2.srcObject;
-	}
-
-	function closeSettings() {
-		editingCam = null;
-		editVideoSource = null;
-	}
-
 	function loadSettings(slot: "cam1" | "cam2", deviceId: string) {
 		if (!deviceId) return;
 		isLoadingSettings[slot] = true;
@@ -485,15 +467,16 @@
 			camId="cam1"
 			width={leftWidth}
 			bind:settings={camSettings.cam1}
+			editLocked={editingCam !== null}
 			bind:selectedDeviceId={selectedCam1}
 			bind:label={cam1Label}
-			bind:videoElement={videoElem1}
 			bind:containerElement={container1}
 			bind:boardKey={cam1BoardKey}
 			bind:scorePos={cam1ScorePos}
 			{videoDevices}
 			{matches}
-			on:openSettings={() => openSettings("cam1")}
+			on:editStart={() => (editingCam = "cam1")}
+			on:editEnd={() => (editingCam = null)}
 			on:scoreDragStart={(e) => startScoreDrag(1, e.detail.originalEvent)}
 		/>
 
@@ -510,15 +493,16 @@
 			camId="cam2"
 			width={100 - leftWidth}
 			bind:settings={camSettings.cam2}
+			editLocked={editingCam !== null}
 			bind:selectedDeviceId={selectedCam2}
 			bind:label={cam2Label}
-			bind:videoElement={videoElem2}
 			bind:containerElement={container2}
 			bind:boardKey={cam2BoardKey}
 			bind:scorePos={cam2ScorePos}
 			{videoDevices}
 			{matches}
-			on:openSettings={() => openSettings("cam2")}
+			on:editStart={() => (editingCam = "cam2")}
+			on:editEnd={() => (editingCam = null)}
 			on:scoreDragStart={(e) => startScoreDrag(2, e.detail.originalEvent)}
 		/>
 	</div>
@@ -552,15 +536,6 @@
 		</div>
 	</IframeSection>
 
-	<!-- SETTINGS MODAL -->
-	{#if editingCam}
-		<SettingsModal
-			{editingCam}
-			bind:settings={camSettings[editingCam]}
-			videoSource={editVideoSource}
-			on:close={closeSettings}
-		/>
-	{/if}
 </main>
 
 <style>

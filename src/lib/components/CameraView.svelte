@@ -1,7 +1,9 @@
 <script lang="ts">
     import { createEventDispatcher, onDestroy } from "svelte";
     import Scoreboard from "./Scoreboard.svelte";
+    import CameraEditor from "./CameraEditor.svelte";
     import type { MatchData, CamSetting } from "../types";
+    import { editDraft } from "../manualEdit";
     import {
         getTransformStyle,
         getMaskStyle,
@@ -17,8 +19,9 @@
     export let matches: MatchData["match"][];
     export let boardKey: string;
     export let scorePos: { x: number; y: number };
+    export let editLocked = false;
 
-    // Expose video element for parent (e.g. for settings modal)
+    // Expose the camera elements for stream and frame measurements.
     export let videoElement: HTMLVideoElement | undefined = undefined;
     export let containerElement: HTMLElement | undefined = undefined;
 
@@ -32,6 +35,10 @@
     let streamError = "";
     let activeStream: MediaStream | null = null;
     let streamRequest = 0;
+    let draft: CamSetting | null = null;
+    let editingDeviceId = '';
+    $: displayedSettings = draft ?? settings;
+    $: if (draft && editingDeviceId && selectedDeviceId !== editingDeviceId) cancelEdit();
 
     onDestroy(() => {
         streamRequest++;
@@ -77,6 +84,27 @@
     function handleScoreDragStart(e: MouseEvent | TouchEvent) {
         dispatch("scoreDragStart", { originalEvent: e });
     }
+
+    function beginEdit() {
+        if (editLocked || draft || !videoElement || !viewportWidth || !viewportHeight) return;
+        editingDeviceId = selectedDeviceId;
+        draft = editDraft(settings, viewportWidth, viewportHeight);
+        showControls = false;
+        dispatch('editStart');
+    }
+
+    function applyEdit(event: CustomEvent<CamSetting>) {
+        settings = event.detail;
+        draft = null;
+        editingDeviceId = '';
+        dispatch('editEnd');
+    }
+
+    function cancelEdit() {
+        draft = null;
+        editingDeviceId = '';
+        dispatch('editEnd');
+    }
 </script>
 
 <!-- SVG Filters for Sharpening -->
@@ -85,7 +113,7 @@
         <filter id="sharpen-{camId}">
             <feConvolveMatrix
                 order="3"
-                kernelMatrix={getSharpenKernel(settings.sharpness)}
+                kernelMatrix={getSharpenKernel(displayedSettings.sharpness)}
                 preserveAlpha="true"
             />
         </filter>
@@ -98,7 +126,7 @@
     bind:this={containerElement}
 >
     <!-- Scoreboard Overlay -->
-    {#if boardKey}
+    {#if boardKey && !draft}
         {@const data = getMatchData(boardKey)}
         {#if data}
             <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -113,11 +141,11 @@
         {/if}
     {/if}
 
-    <div class="controls" class:visible={showControls}>
+    {#if !draft}<div class="controls" class:visible={showControls}>
         <label for="cam-select-{camId}"
             >{camId === "cam1" ? "Kamera 1" : "Kamera 2"}:</label
         >
-        <select id="cam-select-{camId}" bind:value={selectedDeviceId}>
+        <select id="cam-select-{camId}" bind:value={selectedDeviceId} disabled={editLocked || !showControls}>
             {#each videoDevices as device}
                 <option value={device.deviceId}
                     >{device.label || "Kamera"} ({device.deviceId.slice(
@@ -135,6 +163,7 @@
             <select
                 id="board-select-{camId}"
                 bind:value={boardKey}
+                disabled={!showControls}
                 style="max-width: 100px;"
             >
                 <option value="">Keins</option>
@@ -144,30 +173,17 @@
             </select>
         {/if}
 
-        <button
-            class="settings-btn"
-            on:click={() => dispatch("openSettings")}
-            title="Einstellungen"
-        >
-            <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><circle cx="12" cy="12" r="3"></circle><path
-                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
-                ></path></svg
-            >
+        <button class="gear-btn" on:click={beginEdit} disabled={editLocked || !showControls}
+            title="Kamerabild bearbeiten" aria-label="Kamerabild bearbeiten">
+            <span class="gear-icon" aria-hidden="true">⚙</span>
         </button>
+
         <button
             class="toggle-bar-btn"
             on:click={() => (showControls = !showControls)}
             title={showControls ? "Ausblenden" : "Einblenden"}
+            aria-label={showControls ? "Kameramenü schließen" : "Kameramenü öffnen"}
+            aria-expanded={showControls}
         >
             <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -185,8 +201,8 @@
                 ><polyline points="6 9 12 15 18 9"></polyline></svg
             >
         </button>
-    </div>
-    <div class="video-wrapper" style={getMaskStyle(settings)} bind:clientWidth={viewportWidth} bind:clientHeight={viewportHeight}>
+    </div>{/if}
+    <div class="video-wrapper" style={getMaskStyle(displayedSettings)} bind:clientWidth={viewportWidth} bind:clientHeight={viewportHeight}>
         {#if streamError}<p class="camera-error" role="alert">{streamError}</p>{/if}
         <!-- svelte-ignore a11y-media-has-caption -->
         <video
@@ -196,12 +212,16 @@
             muted
             on:loadedmetadata={() => { videoWidth = videoElement?.videoWidth ?? 0; videoHeight = videoElement?.videoHeight ?? 0; }}
             on:resize={() => { videoWidth = videoElement?.videoWidth ?? 0; videoHeight = videoElement?.videoHeight ?? 0; }}
-            style={getTransformStyle(settings, camId, { width: viewportWidth, height: viewportHeight, videoWidth, videoHeight })}
+            style={getTransformStyle(displayedSettings, camId, { width: viewportWidth, height: viewportHeight, videoWidth, videoHeight })}
         ></video>
     </div>
-    <div class="cam-label {camId === 'cam1' ? 'left' : 'right'}">
+    {#if draft}
+        <CameraEditor bind:draft frameWidth={viewportWidth} frameHeight={viewportHeight} video={videoElement}
+            on:apply={applyEdit} on:cancel={cancelEdit} />
+    {/if}
+    {#if !draft}<div class="cam-label {camId === 'cam1' ? 'left' : 'right'}">
         <input type="text" bind:value={label} />
-    </div>
+    </div>{/if}
 </div>
 
 <style>
@@ -236,8 +256,27 @@
         transform: translateY(0);
     }
 
+    .gear-btn {
+        flex: 0 0 44px;
+        width: 44px;
+        height: 44px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border: 1px solid rgba(255, 255, 255, 0.65);
+        border-radius: 7px;
+        color: white;
+        background: rgba(20, 20, 20, 0.85);
+        cursor: pointer;
+    }
+    .gear-btn:hover, .gear-btn:focus-visible { background: #376a9c; }
+    .gear-btn:disabled { opacity: 0.45; cursor: default; }
+    .gear-icon { font-size: 25px; line-height: 1; }
+
     select {
         flex: 1;
+        min-width: 0;
+        min-height: 44px;
         padding: 4px;
         background: #444;
         color: white;
@@ -302,48 +341,29 @@
         border-radius: 2px;
     }
 
-    .settings-btn {
-        background: none;
-        border: none;
-        color: #aaa;
-        cursor: pointer;
-        padding: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-left: 5px;
-    }
-
-    .settings-btn:hover {
-        color: white;
-        background: #444;
-        border-radius: 4px;
-    }
-
     .toggle-bar-btn {
         position: absolute;
-        bottom: -20px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: rgba(51, 51, 51, 0.9);
-        border: none;
-        border-bottom-left-radius: 8px;
-        border-bottom-right-radius: 8px;
+        bottom: -44px;
+        right: 6px;
+        width: 44px;
+        height: 44px;
+        background: rgba(32, 32, 32, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.65);
+        border-radius: 7px;
         color: #ccc;
         cursor: pointer;
-        padding: 0 15px;
-        height: 20px;
+        padding: 0;
         display: flex;
         align-items: center;
         justify-content: center;
-        opacity: 0.3;
+        opacity: 0.85;
         transition:
             opacity 0.3s,
             background 0.3s,
             color 0.3s;
     }
 
-    .toggle-bar-btn:hover {
+    .toggle-bar-btn:hover, .toggle-bar-btn:focus-visible {
         opacity: 1;
         color: white;
         background: rgba(70, 70, 70, 0.9);

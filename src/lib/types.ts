@@ -6,6 +6,9 @@ export interface CamSetting {
     rotate: number;
     x: number;
     y: number;
+    /** Manual pan as a fraction of the visible camera frame. Legacy x/y remain readable. */
+    panX?: number;
+    panY?: number;
     perspective: number;
     rotateX: number;
     rotateY: number;

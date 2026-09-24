@@ -6,6 +6,7 @@
 	import { LiveScoringClient, type ScoringStatus } from "$lib/liveScoring";
 	import { listBoards, parseScoringEventUrl, teamScoreForBoards, type LiveMatch } from "$lib/scoring";
 	import type { CamSettings, CamSetting } from "$lib/types";
+	import type { ScoringCelebration } from "$lib/scoringCelebration";
 
 	// Zustand für verfügbare Geräte und ausgewählte IDs
 	let videoDevices: MediaDeviceInfo[] = [];
@@ -61,6 +62,8 @@
 	// Scoreboard State per Camera
 	let cam1BoardKey = "";
 	let cam2BoardKey = "";
+	let cam1Celebration: ScoringCelebration | null = null;
+	let cam2Celebration: ScoringCelebration | null = null;
 	$: cam1Boards = listBoards(matches, [cam1BoardKey]);
 	$: cam2Boards = listBoards(matches, [cam2BoardKey]);
 	$: teamScore = teamScoreForBoards(matches, [cam1BoardKey, cam2BoardKey]);
@@ -123,6 +126,8 @@
 
 	async function beginCameraEdit(slot: 'cam1' | 'cam2'): Promise<void> {
 		if (editingCam || !(slot === 'cam1' ? cam1Ready : cam2Ready)) return;
+		if (slot === 'cam1') cam1Celebration = null;
+		else cam2Celebration = null;
 		settingsOpen = false;
 		activeCameraSettings = null;
 		await tick();
@@ -139,8 +144,8 @@
 	}
 
 	function updateBoard(slot: 'cam1' | 'cam2', board: string): void {
-		if (slot === 'cam1') cam1BoardKey = board;
-		else cam2BoardKey = board;
+		if (slot === 'cam1') { cam1Celebration = null; cam1BoardKey = board; }
+		else { cam2Celebration = null; cam2BoardKey = board; }
 		saveBoardSelection();
 	}
 
@@ -151,6 +156,8 @@
 			return;
 		}
 		scoringError = '';
+		cam1Celebration = null;
+		cam2Celebration = null;
 		scoringUrl = event.url;
 		scoringUrlDraft = event.url;
 		activeEventKey = event.key;
@@ -220,6 +227,10 @@
 		scoringClient = new LiveScoringClient({
 			onMatches: (next) => (matches = next),
 			onStatus: (next) => (scoringStatus = next),
+			onCelebration: (event) => {
+				if (event.board === cam1BoardKey && editingCam !== 'cam1') cam1Celebration = event;
+				if (event.board === cam2BoardKey && editingCam !== 'cam2') cam2Celebration = event;
+			},
 		});
 		const savedScoringUrl = localStorage.getItem('dartScoringEventUrl');
 		if (savedScoringUrl) activateScoringUrl(savedScoringUrl);
@@ -490,6 +501,7 @@
                     bind:boardKey={cam1BoardKey}
                     bind:scorePos={cam1ScorePos}
                     bind:ready={cam1Ready}
+                    celebration={cam1Celebration}
                     {videoDevices}
                     availableBoards={cam1Boards}
                     {checkingCameras}
@@ -528,6 +540,7 @@
                     bind:boardKey={cam2BoardKey}
                     bind:scorePos={cam2ScorePos}
                     bind:ready={cam2Ready}
+                    celebration={cam2Celebration}
                     {videoDevices}
                     availableBoards={cam2Boards}
                     {checkingCameras}

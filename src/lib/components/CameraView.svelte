@@ -2,6 +2,8 @@
     import { createEventDispatcher, onDestroy } from "svelte";
     import LiveScoreboard from "./LiveScoreboard.svelte";
     import CameraEditor from "./CameraEditor.svelte";
+    import BoardCelebration from "./BoardCelebration.svelte";
+    import type { ScoringCelebration } from "../scoringCelebration";
     import type { MatchData, CamSetting } from "../types";
     import type { ScoringStatus } from "../liveScoring";
     import { matchForBoard } from "../scoring";
@@ -27,6 +29,7 @@
     export let checkingCameras = false;
     export let editLocked = false;
     export let ready = false;
+    export let celebration: ScoringCelebration | null = null;
 
     // Expose the camera elements for stream and frame measurements.
     export let videoElement: HTMLVideoElement | undefined = undefined;
@@ -44,6 +47,9 @@
     let draft: CamSetting | null = null;
     let editingDeviceId = '';
     $: displayedSettings = draft ?? settings;
+    $: selectedMatch = boardKey ? matchForBoard(matches, boardKey) : null;
+    $: visibleCelebration = !draft && celebration?.board === boardKey && selectedMatch &&
+        celebration.matchKey === selectedMatch.matchKey ? celebration : null;
     $: if (draft && editingDeviceId && selectedDeviceId !== editingDeviceId) cancelEdit();
 
     onDestroy(() => {
@@ -143,7 +149,6 @@
 >
     <!-- Scoreboard Overlay -->
     {#if boardKey && !draft && !configOpen}
-        {@const selectedMatch = matchForBoard(matches, boardKey)}
         {#if selectedMatch}
             <!-- svelte-ignore a11y-no-static-element-interactions -->
             <div
@@ -160,6 +165,7 @@
         {/if}
     {/if}
 
+    <BoardCelebration event={visibleCelebration} />
     <div class="camera-heading">
         <span>Kamera {camId === 'cam1' ? '01' : '02'}</span>
         <button id="camera-config-trigger-{camId}" type="button" class="camera-gear"

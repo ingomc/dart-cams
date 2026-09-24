@@ -1,11 +1,13 @@
 import type { LiveMatch, ScoringEvent } from './scoring.ts';
 import { upsertMatch } from './scoring.ts';
+import { detectScoringCelebration, type ScoringCelebration } from './scoringCelebration.ts';
 
 export type ScoringStatus = 'idle' | 'connecting' | 'live' | 'offline' | 'error';
 
 interface LiveScoringCallbacks {
     onMatches(matches: LiveMatch[]): void;
     onStatus(status: ScoringStatus): void;
+    onCelebration?(event: ScoringCelebration): void;
 }
 
 interface LiveScoringDependencies {
@@ -160,9 +162,14 @@ export class LiveScoringClient {
                     ? (payload as { match: unknown }).match : null;
                 if (typeof match !== 'object' || match === null || !('matchPlayers' in match) ||
                     !Array.isArray(match.matchPlayers)) continue;
-                this.matches = upsertMatch(this.matches, match as LiveMatch);
+                const incoming = match as LiveMatch;
+                const previous = this.matches.find((item) =>
+                    item.matchKey === incoming.matchKey && String(item.board) === String(incoming.board)) ?? null;
+                const celebration = detectScoringCelebration(previous, incoming);
+                this.matches = upsertMatch(this.matches, incoming);
                 this.updatesDuringRefresh.push(match as LiveMatch);
                 this.callbacks.onMatches(this.matches);
+                if (celebration) this.callbacks.onCelebration?.(celebration);
             }
         } catch (error) {
             console.error('Fehler beim Verarbeiten der Live-Daten:', error);

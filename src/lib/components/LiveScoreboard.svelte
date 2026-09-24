@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { MatchData } from '../types';
     import { displayLegDarts, displayNumber } from '../scoring';
+    import { isWinner } from '../scoringCelebration';
 
     export let data: MatchData;
     export let stale = false;
@@ -9,6 +10,7 @@
 <div class="scoreboard" class:stale aria-label="Board {data.match.board ?? '–'}: Live-Scoring{stale ? ', letzter Stand' : ''}">
     {#each [0, 1] as index}
         {@const player = data.match.matchPlayers[index]}
+        {@const winner = isWinner(player?.points)}
         <div class="player-row" class:active={data.match.currentplayerIndex === index}>
             <span class="player-name" title={player?.playerName || 'Unbekannt'}>
                 {#if data.match.currentplayerIndex === index}<span class="sr-only">Am Wurf: </span>{/if}
@@ -16,7 +18,10 @@
             </span>
             <span class="stat"><small>Darts</small><strong>{displayLegDarts(player?.darts)}</strong></span>
             <span class="stat"><small>Letzte</small><strong>{displayNumber(player?.lastScore)}</strong></span>
-            <span class="stat remaining"><small>Rest</small><strong>{displayNumber(player?.points)}</strong></span>
+            <span class="stat remaining" class:winner aria-label={winner ? `${player?.playerName || 'Unbekannt'}: Sieger` : `Restscore ${displayNumber(player?.points)}`}>
+                <small>{winner ? 'Ergebnis' : 'Rest'}</small>
+                <strong>{winner ? 'Sieger' : displayNumber(player?.points)}</strong>
+            </span>
         </div>
     {/each}
 </div>
@@ -85,6 +90,11 @@
 
     .remaining strong {
         font-size: 22px;
+    }
+
+    .remaining.winner strong {
+        color: #ffd76a;
+        font-size: 18px;
     }
 
     .sr-only {

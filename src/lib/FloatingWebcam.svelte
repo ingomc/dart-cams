@@ -77,7 +77,7 @@
 	// Dragging Logic
 	function startDrag(e: MouseEvent | TouchEvent) {
 		const target = e.target as HTMLElement | null;
-		if (target?.closest(".controls") || target?.closest(".resizer"))
+		if (target?.closest(".controls") || target?.closest(".resizer") || target?.closest(".close-btn"))
 			return;
 		if (e.type === "touchstart") e.preventDefault();
 
@@ -183,7 +183,7 @@
 	>
 		<div class="header">
 			<span class="drag-handle">Webcam</span>
-			<button class="close-btn" on:click={handleClose}>&times;</button>
+			<button class="close-btn" aria-label="Webcam schließen" on:click={handleClose}>&times;</button>
 		</div>
 
 		<div class="video-container">
@@ -192,7 +192,8 @@
 		</div>
 
 		<div class="controls">
-			<select bind:value={selectedDeviceId}>
+			<label for="floating-webcam-device">Kameraquelle</label>
+			<select class="ui-field" id="floating-webcam-device" bind:value={selectedDeviceId}>
 				<option value="">Kamera wählen...</option>
 				{#each videoDevices as device}
 					<option value={device.deviceId}
@@ -214,93 +215,108 @@
 {/if}
 
 <style>
-	.floating-window {
-		position: fixed;
-		background: #222;
-		border: 1px solid #444;
-		border-radius: 8px;
-		box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
-		display: flex;
-		flex-direction: column;
-		z-index: 2000;
-		overflow: hidden;
-		min-width: 160px;
-		min-height: 120px;
-	}
+    .floating-window {
+        position: fixed;
+        z-index: 2000;
+        display: flex;
+        flex-direction: column;
+        min-width: 160px;
+        min-height: 120px;
+        overflow: hidden;
+        border: 1px solid var(--color-border);
+        border-top: 3px solid var(--color-brand);
+        border-radius: var(--radius-md);
+        background: var(--color-surface);
+        box-shadow: var(--shadow-panel);
+    }
 
-	.header {
-		background: #333;
-		padding: 5px 10px;
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		cursor: move;
-		user-select: none;
-	}
+    .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-2);
+        min-height: 42px;
+        padding: 2px var(--space-2) 2px var(--space-3);
+        border-bottom: 1px solid var(--color-border);
+        background: var(--color-surface-raised);
+        cursor: move;
+        user-select: none;
+    }
 
-	.drag-handle {
-		font-size: 0.8rem;
-		color: #ccc;
-		font-weight: bold;
-	}
+    .drag-handle {
+        color: var(--color-text);
+        font: 600 15px/1 var(--font-display);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
 
-	.close-btn {
-		background: none;
-		border: none;
-		color: #aaa;
-		font-size: 1.2rem;
-		cursor: pointer;
-		padding: 0 5px;
-		line-height: 1;
-	}
+    .close-btn {
+        width: 34px;
+        height: 34px;
+        padding: 0;
+        border: 1px solid transparent;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--color-text-secondary);
+        font-size: 24px;
+        line-height: 1;
+    }
 
-	.close-btn:hover {
-		color: white;
-	}
+    .close-btn:hover {
+        border-color: var(--color-border);
+        background: var(--color-brand-active);
+        color: var(--color-text);
+    }
 
-	.video-container {
-		flex: 1;
-		background: black;
-		overflow: hidden;
-		position: relative;
-	}
+    .video-container {
+        position: relative;
+        flex: 1;
+        overflow: hidden;
+        background: var(--color-video);
+    }
 
-	video {
-		width: 100%;
-		height: 100%;
-		object-fit: cover;
-	}
+    video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
 
-	.controls {
-		padding: 5px;
-		background: #333;
-	}
+    .controls {
+        display: grid;
+        gap: 4px;
+        padding: var(--space-2);
+        border-top: 1px solid var(--color-border);
+        background: var(--color-surface);
+    }
 
-	select {
-		width: 100%;
-		padding: 4px;
-		background: #444;
-		color: white;
-		border: 1px solid #555;
-		font-size: 0.8rem;
-	}
+    .controls label {
+        color: var(--color-text-secondary);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+    }
 
-	.resizer {
-		position: absolute;
-		bottom: 0;
-		right: 0;
-		width: 15px;
-		height: 15px;
-		cursor: se-resize;
-		background: linear-gradient(135deg, transparent 50%, #666 50%);
-	}
+    .controls select {
+        min-height: 36px;
+        padding: 5px 8px;
+        font-size: 12px;
+    }
 
-	.drag-overlay {
-		position: fixed;
-		top: 0;
-		left: 0;
-		width: 100vw;
-		height: 100vh;
-		z-index: 1999;
-	}
+    .resizer {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        width: 16px;
+        height: 16px;
+        cursor: se-resize;
+        background: linear-gradient(135deg, transparent 50%, var(--color-brand-text) 50%);
+    }
+
+    .drag-overlay {
+        position: fixed;
+        z-index: 1999;
+        inset: 0;
+        cursor: grabbing;
+    }
 </style>

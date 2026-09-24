@@ -430,55 +430,203 @@
 </div>
 
 <style>
-    .editor { position: absolute; inset: 0; z-index: 200; color: white; overflow: hidden; }
+    .editor {
+        position: absolute;
+        z-index: 200;
+        inset: 0;
+        overflow: hidden;
+        box-shadow: inset 0 0 0 2px var(--color-brand);
+        color: var(--color-text);
+    }
+
     .gesture-layer { position: absolute; inset: 0; touch-action: none; cursor: move; }
     .gesture-layer.inactive { pointer-events: none; }
-    .target-ring, .mask-ring { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); border: 2px dashed rgba(255,255,255,.8); border-radius: 50%; pointer-events: none; box-sizing: border-box; box-shadow: 0 0 0 1px #111; }
-    .mask-ring { border-color: #52d2ff; }
-    .mask-ring.off { opacity: .55; border-style: dotted; }
-    button { color: white; background: rgba(25,25,25,.94); border: 1px solid #999; border-radius: 7px; cursor: pointer; min-width: 44px; min-height: 44px; font: inherit; }
-    button:hover, button:focus-visible { background: #376a9c; }
-    button:disabled { opacity: .5; cursor: default; }
-    button.active { background: #1769aa; }
-    .grip { position: absolute; transform: translate(-50%, -50%); z-index: 2; touch-action: none; font-size: 25px; font-weight: bold; padding: 0; }
-    .mask-grip { border-color: #52d2ff; }
-    .top-tools { position: absolute; top: 6px; left: 6px; right: 6px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: 'modes magic utilities' 'status status status'; align-items: start; gap: 4px; z-index: 3; pointer-events: none; }
+
+    .target-ring,
+    .mask-ring {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        box-sizing: border-box;
+        transform: translate(-50%, -50%);
+        border: 2px dashed rgba(255, 255, 255, 0.9);
+        border-radius: 50%;
+        box-shadow: 0 0 0 1px var(--color-background);
+        pointer-events: none;
+    }
+
+    .mask-ring { border-color: var(--color-brand-text); }
+    .mask-ring.off { opacity: 0.55; border-style: dotted; }
+
+    button {
+        min-width: 42px;
+        min-height: 42px;
+        padding: 0 10px;
+        border: 1px solid #777b7e;
+        border-radius: var(--radius-sm);
+        background: rgba(21, 23, 25, 0.94);
+        color: var(--color-text);
+        font: 600 13px/1.2 var(--font-body);
+        cursor: pointer;
+    }
+
+    button:hover:not(:disabled),
+    button:focus-visible {
+        border-color: var(--color-brand-text);
+        background: var(--color-surface-raised);
+    }
+
+    button:disabled { opacity: 0.48; cursor: not-allowed; }
+    button.active { border-color: var(--color-brand-text); background: var(--color-brand-active); }
+
+    .grip {
+        position: absolute;
+        z-index: 2;
+        padding: 0;
+        transform: translate(-50%, -50%);
+        touch-action: none;
+        font-size: 25px;
+        font-weight: 700;
+    }
+
+    .mask-grip { border-color: var(--color-brand-text); }
+
+    .top-tools {
+        position: absolute;
+        z-index: 3;
+        top: 8px;
+        right: 8px;
+        left: 8px;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-areas: 'modes magic utilities' 'status status status';
+        align-items: start;
+        gap: 6px;
+        pointer-events: none;
+    }
+
     .top-tools > * { pointer-events: auto; }
-    .top-tools button { padding: 0 7px; font-size: 13px; }
+    .top-tools button { padding: 0 8px; }
     .mode-tools { grid-area: modes; display: flex; gap: 4px; }
-    .mode-tools button { min-width: 52px; }
+    .mode-tools button { min-width: 54px; }
     .utility-tools { grid-area: utilities; display: flex; gap: 4px; justify-self: end; }
     .extras-icon { display: none; font-size: 23px; line-height: 1; }
     .auto-tools { grid-area: magic; min-width: 0; }
-    .auto-button { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; font-weight: 600; background: #6642a0; border-color: #d3b8ff; }
-    .auto-button:hover, .auto-button:focus-visible { background: #8257bf; }
+
+    .auto-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        width: 100%;
+        border-color: var(--color-brand);
+        background: var(--color-brand);
+        font-weight: 700;
+        white-space: nowrap;
+    }
+
+    .auto-button:hover:not(:disabled),
+    .auto-button:focus-visible { background: var(--color-brand-hover); }
     .auto-button svg { flex: none; }
     .auto-label-short, .auto-label-tiny { display: none; }
-    .auto-status { grid-area: status; margin: 0; padding: 6px 9px; max-height: 72px; overflow: auto; background: rgba(20,20,20,.92); border: 1px solid #9b89b5; border-radius: 7px; font-size: 12px; line-height: 1.35; }
-    .extras { position: absolute; z-index: 4; right: 6px; width: min(300px, calc(100% - 12px)); overflow-y: auto; overscroll-behavior: contain; padding: 10px; box-sizing: border-box; display: grid; align-content: start; gap: 14px; background: rgba(24,24,24,.97); border: 1px solid #888; border-radius: 7px; font-size: 13px; }
+
+    .auto-status {
+        grid-area: status;
+        max-height: 72px;
+        overflow: auto;
+        margin: 0;
+        padding: 7px 10px;
+        border: 1px solid var(--color-brand-text);
+        border-radius: var(--radius-sm);
+        background: rgba(21, 23, 25, 0.96);
+        font-size: 12px;
+        line-height: 1.4;
+    }
+
+    .extras {
+        position: absolute;
+        z-index: 4;
+        right: 8px;
+        display: grid;
+        align-content: start;
+        gap: 16px;
+        width: min(320px, calc(100% - 16px));
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 12px;
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        background: rgba(34, 36, 38, 0.98);
+        box-shadow: var(--shadow-panel);
+        font-size: 13px;
+    }
+
     .extras-section { display: grid; gap: 8px; min-width: 0; }
-    .extras-section + .extras-section { padding-top: 12px; border-top: 1px solid #777; }
-    .extras h3 { margin: 0; font-size: 14px; }
-    .extras label { display: grid; gap: 2px; }
-    .extras input[type="range"] { width: 100%; min-height: 44px; margin: 0; }
-    .extras button { font-size: 13px; }
-    .bottom-tools { position: absolute; bottom: 6px; left: 6px; right: 6px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 4px; z-index: 3; pointer-events: none; }
+    .extras-section + .extras-section { padding-top: 12px; border-top: 1px solid var(--color-border); }
+    .extras h3 { margin: 0; font: 600 17px/1.2 var(--font-display); text-transform: uppercase; }
+    .extras label { display: grid; gap: 2px; color: var(--color-text-secondary); }
+    .extras input[type="range"] { width: 100%; min-height: 40px; margin: 0; accent-color: var(--color-brand); }
+    .extras button { font-size: 12px; }
+
+    .bottom-tools {
+        position: absolute;
+        z-index: 3;
+        right: 8px;
+        bottom: 8px;
+        left: 8px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: end;
+        gap: 6px;
+        pointer-events: none;
+    }
+
     .bottom-tools > div { pointer-events: auto; }
-    .bottom-tools button { font-size: 13px; padding: 0 7px; }
-    .adjust-tools, .mask-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 4px; min-width: 0; }
-    .adjust-group { display: grid; gap: 2px; padding: 4px; background: rgba(20,20,20,.88); border: 1px solid #777; border-radius: 7px; }
-    .adjust-group span { font-size: 12px; text-align: center; }
+    .bottom-tools button { padding: 0 8px; }
+    .adjust-tools, .mask-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 6px; min-width: 0; }
+
+    .adjust-group {
+        display: grid;
+        gap: 3px;
+        padding: 5px;
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-sm);
+        background: rgba(21, 23, 25, 0.94);
+    }
+
+    .adjust-group span { color: var(--color-text-secondary); font-size: 11px; text-align: center; }
     .adjust-buttons { display: flex; gap: 4px; }
     .adjust-buttons button { font-size: 22px; }
     .mask-toggle { white-space: nowrap; }
-    .mask-slider { display: grid; grid-template-columns: 42px minmax(60px, 1fr) 33px; align-items: center; gap: 4px; flex: 1 1 172px; min-width: 0; min-height: 44px; padding: 0 5px; background: rgba(20,20,20,.88); border: 1px solid #777; border-radius: 7px; font-size: 12px; }
-    .mask-slider input { width: 100%; min-width: 0; min-height: 44px; margin: 0; }
+
+    .mask-slider {
+        display: grid;
+        grid-template-columns: 42px minmax(60px, 1fr) 33px;
+        align-items: center;
+        gap: 4px;
+        flex: 1 1 172px;
+        min-width: 0;
+        min-height: 42px;
+        padding: 0 6px;
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-sm);
+        background: rgba(21, 23, 25, 0.94);
+        font-size: 12px;
+    }
+
+    .mask-slider input { width: 100%; min-width: 0; min-height: 40px; margin: 0; accent-color: var(--color-brand); }
     .mask-slider output { text-align: right; }
     .decision-tools { display: flex; flex-wrap: wrap; gap: 4px; justify-self: end; }
-    .bottom-tools .apply { background: #167145; }
-    .bottom-tools .apply:hover, .bottom-tools .apply:focus-visible { background: #208d58; }
-    .editor.compact .top-tools { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'modes utilities' 'magic magic' 'status status'; }
-    .editor.compact .mode-tools button { min-width: 44px; }
+    .bottom-tools .apply { border-color: var(--color-brand); background: var(--color-brand); }
+    .bottom-tools .apply:hover:not(:disabled),
+    .bottom-tools .apply:focus-visible { background: var(--color-brand-hover); }
+
+    .editor.compact .top-tools {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: 'modes utilities' 'magic magic' 'status status';
+    }
+
+    .editor.compact .mode-tools button { min-width: 42px; }
     .editor.compact .auto-label-full { display: none; }
     .editor.compact .auto-label-short { display: inline; }
     .editor.compact .bottom-tools { grid-template-columns: minmax(0, 1fr); }

@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { MatchData } from '../types';
-    import { displayLegDarts, displayNumber } from '../scoring';
+    import { displayAverage, displayNumber } from '../scoring';
     import { isWinner } from '../scoringCelebration';
 
     export let data: MatchData;
@@ -11,15 +11,16 @@
     {#each [0, 1] as index}
         {@const player = data.match.matchPlayers[index]}
         {@const winner = isWinner(player?.points)}
+        {@const average = displayAverage(player)}
         <div class="player-row" class:active={data.match.currentplayerIndex === index}>
             <span class="player-name" title={player?.playerName || 'Unbekannt'}>
                 {#if data.match.currentplayerIndex === index}<span class="sr-only">Am Wurf: </span>{/if}
                 {player?.playerName || 'Unbekannt'}
             </span>
-            <span class="stat"><small>Darts</small><strong>{displayLegDarts(player?.darts)}</strong></span>
-            <span class="stat"><small>Letzte</small><strong>{displayNumber(player?.lastScore)}</strong></span>
+            <span class="stat average" aria-label="3-Dart-Average {average}">Ø {average}</span>
+            <span class="stat legs" aria-label="Gewonnene Legs {displayNumber(player?.legs)}">{displayNumber(player?.legs)}</span>
+            <span class="stat last-score" aria-label="Letzter Wurf {displayNumber(player?.lastScore)}">{displayNumber(player?.lastScore)}</span>
             <span class="stat remaining" class:winner aria-label={winner ? `${player?.playerName || 'Unbekannt'}: Sieger` : `Restscore ${displayNumber(player?.points)}`}>
-                <small>{winner ? 'Ergebnis' : 'Rest'}</small>
                 <strong>{winner ? 'Sieger' : displayNumber(player?.points)}</strong>
             </span>
         </div>
@@ -44,11 +45,11 @@
 
     .player-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 36px 42px 48px;
+        grid-template-columns: minmax(0, 1fr) 54px 20px 28px 48px;
         align-items: center;
-        gap: 8px;
-        min-height: 43px;
-        padding: 4px 8px;
+        gap: 6px;
+        min-height: 28px;
+        padding: 3px 8px;
         border-left: 3px solid transparent;
     }
 
@@ -71,25 +72,33 @@
     }
 
     .stat {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        line-height: 1.05;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
+        text-align: right;
         white-space: nowrap;
     }
 
-    .stat small {
+    .average {
         color: var(--color-text-secondary);
-        font-size: 9px;
+        font-size: 11px;
     }
 
-    .stat strong {
-        margin-top: 3px;
-        font: 600 16px/1 var(--font-display);
+    .legs {
+        padding: 2px 0;
+        border: 1px solid var(--color-border);
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.06);
+        font: 600 13px/1 var(--font-display);
+        text-align: center;
+    }
+
+    .last-score {
+        color: var(--color-text-muted);
+        font: 500 15px/1 var(--font-display);
     }
 
     .remaining strong {
-        font-size: 22px;
+        font: 600 20px/1 var(--font-display);
     }
 
     .remaining.winner strong {

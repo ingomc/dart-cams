@@ -53,6 +53,11 @@ export interface MatchPlayer {
     /** Darts thrown in the current leg; the feed also provides dartsTotal for the match. */
     darts: number | string;
     dartsTotal?: number;
+    avg?: number | string;
+    average?: number | string;
+    scoreTotal?: number;
+    scoreAdditional?: number;
+    dartsAdditional?: number;
     lastScore: number;
 }
 

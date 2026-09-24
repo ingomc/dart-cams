@@ -1,4 +1,4 @@
-import type { MatchData } from './types';
+import type { MatchData, MatchPlayer } from './types';
 
 export type LiveMatch = MatchData['match'];
 
@@ -103,6 +103,32 @@ export function displayNumber(value: unknown): string {
     if (typeof value === 'number' && Number.isFinite(value)) return String(value);
     if (typeof value === 'string' && /^\d+$/.test(value.trim())) return value.trim();
     return '–';
+}
+
+function averageNumber(value: unknown): number | null {
+    if (typeof value === 'string' && /^\d+(?:[.,]\d+)?$/.test(value.trim())) {
+        value = Number(value.trim().replace(',', '.'));
+    }
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+export function displayAverage(player: MatchPlayer | undefined): string {
+    if (!player) return '–';
+    let average = averageNumber(player.avg) ?? averageNumber(player.average);
+    if (average === null) {
+        // The 3K live feed also supplies totals; mirror its averagePipe when no average is sent.
+        let score = averageNumber(player.scoreTotal);
+        let darts = averageNumber(player.dartsTotal);
+        if (score === null || darts === null || score <= 0 || darts <= 0) return '–';
+        const extraScore = averageNumber(player.scoreAdditional);
+        const extraDarts = averageNumber(player.dartsAdditional);
+        if (extraScore !== null && extraDarts !== null && extraDarts > 0) {
+            score += extraScore;
+            darts += extraDarts;
+        }
+        average = score / darts * 3;
+    }
+    return (Math.round(average * 10) / 10).toFixed(1).replace('.', ',');
 }
 
 /** The provider's `darts` field is the current leg counter when it is numeric. */

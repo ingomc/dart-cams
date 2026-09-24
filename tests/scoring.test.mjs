@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+    displayAverage,
     displayLegDarts,
     displayNumber,
     listBoards,
@@ -53,6 +54,19 @@ test('missing or ambiguous scores show a dash, but zero stays visible', () => {
     assert.equal(displayLegDarts(12), '12');
     assert.equal(displayLegDarts('T20, S20'), '–');
     assert.equal(displayLegDarts(undefined), '–');
+});
+
+test('average prefers the supplied value and otherwise matches the provider totals', () => {
+    const player = { ...match(0, 'average').matchPlayers[0], scoreTotal: 327, dartsTotal: 27 };
+    assert.equal(displayAverage({ ...player, avg: '60,25' }), '60,3');
+    assert.equal(displayAverage({ ...player, average: 52.4 }), '52,4');
+    assert.equal(displayAverage({ ...player, avg: 0 }), '0,0');
+    assert.equal(displayAverage(player), '36,3');
+    assert.equal(displayAverage({ ...player, scoreAdditional: 60, dartsAdditional: 3 }), '38,7');
+    assert.equal(displayAverage({ ...player, avg: '', average: NaN }), '36,3');
+    assert.equal(displayAverage({ ...player, dartsTotal: 0 }), '–');
+    assert.equal(displayAverage({ ...player, scoreTotal: undefined }), '–');
+    assert.equal(displayAverage(undefined), '–');
 });
 
 test('league footer uses the latest selected board and keeps hyphens in the guest team', () => {

@@ -65,6 +65,9 @@ export interface MatchData {
         groupName: string;
         board?: number | string;
         vbName?: string;
+        typ?: string;
+        teamParentMatchName?: string;
+        lastUpdate?: string;
         setsHome?: number;
         setsGuest?: number;
         legsHome?: number;

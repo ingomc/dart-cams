@@ -6,6 +6,7 @@ import {
     listBoards,
     matchForBoard,
     parseScoringEventUrl,
+    teamScoreForBoards,
     upsertMatch,
 } from '../src/lib/scoring.ts';
 import { LiveScoringClient } from '../src/lib/liveScoring.ts';
@@ -52,6 +53,24 @@ test('missing or ambiguous scores show a dash, but zero stays visible', () => {
     assert.equal(displayLegDarts(12), '12');
     assert.equal(displayLegDarts('T20, S20'), '–');
     assert.equal(displayLegDarts(undefined), '–');
+});
+
+test('league footer uses the latest selected board and keeps hyphens in the guest team', () => {
+    const fixture = 'Heim A - Gast - Club (Liga A)';
+    const older = {
+        ...match(1, 'board-1'), typ: 'LIGA', groupName: fixture,
+        setsHome: 4, setsGuest: 3, lastUpdate: '2026-09-24T20:00:00Z',
+    };
+    const newer = {
+        ...match(2, 'board-2'), typ: 'LIGA', groupName: fixture,
+        setsHome: 5, setsGuest: 3, lastUpdate: '2026-09-24T20:01:00Z',
+    };
+    assert.deepEqual(teamScoreForBoards([older, newer], ['1', '2']), {
+        home: 'Heim A', guest: 'Gast - Club', homeScore: '5', guestScore: '3',
+    });
+    assert.equal(teamScoreForBoards([older, newer], ['3']), null);
+    assert.equal(teamScoreForBoards([{ ...newer, typ: 'TURNIER' }], ['2']), null);
+    assert.equal(teamScoreForBoards([{ ...newer, setsHome: -1 }], ['2']), null);
 });
 
 test('switching events ignores the old request and closes its socket', async () => {

@@ -4,133 +4,95 @@
 
     export let data: MatchData;
     export let stale = false;
-    $: eventTitle = [
-        [data.match.vbName, data.match.groupName].filter(Boolean).join(': '),
-        data.match.roundName,
-        data.match.mode,
-    ].filter(Boolean).join(' · ');
 </script>
 
-<div class="scoreboard" class:stale aria-label="Live-Score Board {data.match.board ?? ''}">
-    <div class="heading">
-        <div class="opponent" title={data.match.matchPlayers[0]?.playerName || 'Unbekannt'}>{data.match.matchPlayers[0]?.playerName || 'Unbekannt'}</div>
-        <div class="event-score" aria-label="Gesamtstand {displayNumber(data.match.setsHome)} zu {displayNumber(data.match.setsGuest)}, Legs {displayNumber(data.match.legsHome)} zu {displayNumber(data.match.legsGuest)}">
-            <strong>{displayNumber(data.match.setsHome)}:{displayNumber(data.match.setsGuest)}</strong>
-            <small>Legs {displayNumber(data.match.legsHome)}:{displayNumber(data.match.legsGuest)}</small>
+<div class="scoreboard" class:stale aria-label="Board {data.match.board ?? '–'}: Live-Scoring{stale ? ', letzter Stand' : ''}">
+    {#each [0, 1] as index}
+        {@const player = data.match.matchPlayers[index]}
+        <div class="player-row" class:active={data.match.currentplayerIndex === index}>
+            <span class="player-name" title={player?.playerName || 'Unbekannt'}>
+                {#if data.match.currentplayerIndex === index}<span class="sr-only">Am Wurf: </span>{/if}
+                {player?.playerName || 'Unbekannt'}
+            </span>
+            <span class="stat"><small>Darts</small><strong>{displayLegDarts(player?.darts)}</strong></span>
+            <span class="stat"><small>Letzte</small><strong>{displayNumber(player?.lastScore)}</strong></span>
+            <span class="stat remaining"><small>Rest</small><strong>{displayNumber(player?.points)}</strong></span>
         </div>
-        <div class="opponent" title={data.match.matchPlayers[1]?.playerName || 'Unbekannt'}>{data.match.matchPlayers[1]?.playerName || 'Unbekannt'}</div>
-    </div>
-    <div class="players">
-        {#each data.match.matchPlayers as player, index}
-            <div class="player" class:active={data.match.currentplayerIndex === index}>
-                <div class="score" aria-label="Restscore {displayNumber(player.points)}">{displayNumber(player.points)}</div>
-                <div class="throw-stats">Darts <strong>{displayLegDarts(player.darts)}</strong> · Letzte <strong>{displayNumber(player.lastScore)}</strong></div>
-            </div>
-        {/each}
-    </div>
-    <div class="title" title={eventTitle}>Board {data.match.board ?? '–'} · {eventTitle}{stale ? ' · Letzter Stand' : ''}</div>
+    {/each}
 </div>
 
 <style>
     .scoreboard {
         width: 100%;
-        padding: 7px 10px 8px;
-        border: 1px solid rgba(255, 255, 255, 0.42);
-        border-top: 3px solid var(--color-brand);
-        border-radius: var(--radius-md);
-        background: rgba(21, 23, 25, 0.91);
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.32);
+        border-radius: var(--radius-sm);
+        background: rgba(21, 23, 25, 0.88);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
         color: var(--color-text);
         pointer-events: none;
     }
 
     .scoreboard.stale {
-        border-top-color: var(--color-warning);
+        border-color: var(--color-warning);
     }
 
-    .heading {
+    .player-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-        align-items: start;
-        gap: 6px;
+        grid-template-columns: minmax(0, 1fr) 36px 42px 48px;
+        align-items: center;
+        gap: 8px;
+        min-height: 43px;
+        padding: 4px 8px;
+        border-left: 3px solid transparent;
     }
 
-    .opponent {
+    .player-row + .player-row {
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .player-row.active {
+        border-left-color: var(--color-brand-text);
+        background: rgba(190, 8, 38, 0.13);
+    }
+
+    .player-name {
         min-width: 0;
         overflow: hidden;
-        font-size: clamp(0.72rem, 1.3vw, 0.92rem);
+        font-size: 12px;
         font-weight: 700;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
 
-    .opponent:last-child { text-align: right; }
-
-    .event-score {
+    .stat {
         display: flex;
         flex-direction: column;
-        align-items: center;
+        align-items: flex-end;
         line-height: 1.05;
         white-space: nowrap;
     }
 
-    .event-score strong {
-        font: 600 18px/1 var(--font-display);
-    }
-
-    .event-score small {
+    .stat small {
         color: var(--color-text-secondary);
-        font-size: 10px;
+        font-size: 9px;
     }
 
-    .players {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 6px;
-        margin-top: 4px;
+    .stat strong {
+        margin-top: 3px;
+        font: 600 16px/1 var(--font-display);
     }
 
-    .player {
-        min-width: 0;
-        padding-bottom: 3px;
-        text-align: center;
+    .remaining strong {
+        font-size: 22px;
     }
 
-    .player + .player {
-        padding-left: 6px;
-        border-left: 1px solid var(--color-border);
-    }
-
-    .player.active {
-        border-bottom: 2px solid var(--color-brand-text);
-    }
-
-    .score {
-        font: 600 clamp(1.9rem, 3.5vw, 2.7rem)/1 var(--font-display);
-    }
-
-    .throw-stats {
-        color: var(--color-text-secondary);
-        font-size: 11px;
-        white-space: nowrap;
-    }
-
-    .throw-stats strong {
-        color: var(--color-text);
-    }
-
-    .title {
-        display: -webkit-box;
+    .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
         overflow: hidden;
-        margin-top: 4px;
-        padding-top: 4px;
-        border-top: 1px solid var(--color-border);
-        color: var(--color-text-secondary);
-        font-size: 11px;
-        line-height: 1.2;
-        text-align: center;
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 2;
-        line-clamp: 2;
+        clip-path: inset(50%);
+        white-space: nowrap;
     }
 </style>

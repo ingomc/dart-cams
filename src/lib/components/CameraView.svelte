@@ -18,9 +18,13 @@
     export let selectedDeviceId: string;
     export let label: string;
     export let matches: MatchData["match"][];
+    export let videoDevices: MediaDeviceInfo[] = [];
+    export let availableBoards: string[] = [];
     export let boardKey: string;
     export let scoringStatus: ScoringStatus;
-    export let scorePos: { x: number; y: number };
+    export let scorePos: { x: number | null; y: number | null };
+    export let configOpen = false;
+    export let checkingCameras = false;
     export let editLocked = false;
     export let ready = false;
 
@@ -94,6 +98,10 @@
         dispatch("scoreDragStart", { originalEvent: e });
     }
 
+    function changeBoard(event: Event) {
+        dispatch('boardChange', { board: (event.currentTarget as HTMLSelectElement).value });
+    }
+
     export function openEditor() {
         if (editLocked || draft || !ready || !selectedDeviceId || !videoElement || !viewportWidth || !viewportHeight) return;
         editingDeviceId = selectedDeviceId;
@@ -134,13 +142,14 @@
     bind:this={containerElement}
 >
     <!-- Scoreboard Overlay -->
-    {#if boardKey && !draft}
+    {#if boardKey && !draft && !configOpen}
         {@const selectedMatch = matchForBoard(matches, boardKey)}
         {#if selectedMatch}
             <!-- svelte-ignore a11y-no-static-element-interactions -->
             <div
                 class="ws-message-overlay draggable"
-                style="left: {scorePos.x}%; top: {scorePos.y}%;"
+                class:positioned={scorePos.x !== null}
+                style={scorePos.x === null ? '' : `left: ${scorePos.x}%; top: ${scorePos.y ?? 0}%;`}
                 on:mousedown={handleScoreDragStart}
                 on:touchstart={handleScoreDragStart}
             >
@@ -151,15 +160,65 @@
         {/if}
     {/if}
 
-    <div class="camera-heading" aria-hidden="true">Kamera {camId === 'cam1' ? '01' : '02'}</div>
+    <div class="camera-heading">
+        <span>Kamera {camId === 'cam1' ? '01' : '02'}</span>
+        <button id="camera-config-trigger-{camId}" type="button" class="camera-gear"
+            aria-label="Kamera {camId === 'cam1' ? '1' : '2'} Einstellungen {configOpen ? 'schließen' : 'öffnen'}"
+            aria-controls="camera-config-{camId}" aria-expanded={configOpen}
+            on:click={() => dispatch('configure')}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
+                <path d="M10 2h4l.5 2.2 1.7.7 1.9-1.2 2.8 2.8-1.2 1.9.7 1.7L22 10v4l-2.2.5-.7 1.7 1.2 1.9-2.8 2.8-1.9-1.2-1.7.7L14 22h-4l-.5-2.2-1.7-.7-1.9 1.2-2.8-2.8 1.2-1.9-.7-1.7L2 14v-4l2.2-.5.7-1.7-1.2-1.9 2.8-2.8 1.9 1.2 1.7-.7L10 2Z" />
+                <circle cx="12" cy="12" r="3" />
+            </svg>
+        </button>
+    </div>
+    <section id="camera-config-{camId}" class="camera-settings-panel ui-panel"
+        aria-labelledby="camera-config-title-{camId}" hidden={!configOpen || !!draft}>
+        <div class="config-heading">
+            <h3 id="camera-config-title-{camId}">Kamera {camId === 'cam1' ? '01' : '02'}</h3>
+            <button type="button" class="config-close"
+                aria-label="Kamera {camId === 'cam1' ? '1' : '2'} Einstellungen schließen"
+                on:click={() => dispatch('configure')}>×</button>
+        </div>
+        <div class="config-fields">
+            <label class="ui-label" for="cam-select-{camId}">Kameraquelle</label>
+            <select class="ui-field" id="cam-select-{camId}" bind:value={selectedDeviceId}
+                disabled={editLocked}>
+                <option value="">Keine Kamera</option>
+                {#each videoDevices as device}
+                    <option value={device.deviceId}>{device.label || 'Kamera'} ({device.deviceId.slice(0, 8)}…)</option>
+                {/each}
+            </select>
+            <button type="button" class="refresh-cameras" disabled={checkingCameras}
+                on:click={() => dispatch('refreshDevices')}>Kameras neu suchen</button>
+
+            <label class="ui-label" for="cam-label-{camId}">Bezeichnung</label>
+            <input class="ui-field" id="cam-label-{camId}" type="text" maxlength="24" bind:value={label} />
+
+            {#if scoringStatus !== 'idle' || boardKey}
+                <label class="ui-label" for="board-select-{camId}">Live-Scoreboard</label>
+                <select class="ui-field" id="board-select-{camId}" value={boardKey} on:change={changeBoard}>
+                    <option value="">Kein Board</option>
+                    {#each availableBoards as board}
+                        {@const match = matchForBoard(matches, board)}
+                        <option value={board}>B{board}{match ? ' · ' + match.matchPlayers.map((player) => player.playerName).join(' / ') : ' · kein Match'}</option>
+                    {/each}
+                </select>
+            {/if}
+
+            <button type="button" class="ui-button ui-button--secondary ui-button--small edit-image"
+                disabled={!ready || editLocked} on:click={() => dispatch('editRequest')}>Kamerabild bearbeiten</button>
+        </div>
+    </section>
     <div class="video-wrapper" style={getMaskStyle(displayedSettings)} bind:clientWidth={viewportWidth} bind:clientHeight={viewportHeight}>
         {#if !draft && (!selectedDeviceId || streamError)}
             <div class="empty-state" role={streamError ? 'alert' : 'status'}>
                 <span class="empty-mark" aria-hidden="true">◎</span>
                 <strong>{streamError ? 'Kamera nicht verfügbar' : 'Keine Kamera ausgewählt'}</strong>
-                <p>{streamError || 'Wähle eine Kamera in den Einstellungen aus.'}</p>
+                <p>{streamError || 'Wähle eine Kamera über das Zahnrad oben links aus.'}</p>
                 <button type="button" class="ui-button ui-button--secondary ui-button--small"
-                    on:click={() => dispatch('configure')}>Einstellungen öffnen</button>
+                    on:click={() => dispatch('configure')}>Kamera einrichten</button>
             </div>
         {:else if !draft && !ready}
             <p class="connecting" role="status">Kamera wird verbunden…</p>
@@ -197,10 +256,14 @@
 
     .camera-heading {
         position: absolute;
-        z-index: 8;
+        z-index: 160;
         top: 12px;
         left: 12px;
-        padding: 5px 9px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        min-height: 30px;
+        padding: 2px 3px 2px 9px;
         border: 1px solid rgba(255, 255, 255, 0.14);
         border-radius: var(--radius-sm);
         background: rgba(21, 23, 25, 0.84);
@@ -208,7 +271,104 @@
         font: 600 12px/1.2 var(--font-display);
         letter-spacing: 0.12em;
         text-transform: uppercase;
-        pointer-events: none;
+    }
+
+    .camera-gear {
+        display: grid;
+        width: 26px;
+        height: 26px;
+        place-items: center;
+        padding: 0;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--color-text-secondary);
+    }
+
+    .camera-gear:hover,
+    .camera-gear[aria-expanded="true"] {
+        background: var(--color-surface-raised);
+        color: var(--color-text);
+    }
+
+    .camera-settings-panel {
+        position: absolute;
+        z-index: 170;
+        top: 50px;
+        left: 12px;
+        width: min(320px, calc(100% - 24px));
+        max-height: calc(100% - 62px);
+        overflow-y: auto;
+        padding: var(--space-2) var(--space-3) var(--space-3);
+        border-color: #626669;
+        box-shadow: var(--shadow-panel);
+    }
+
+    .camera-settings-panel[hidden] {
+        display: none;
+    }
+
+    .config-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-2);
+        margin-bottom: var(--space-2);
+    }
+
+    .config-heading h3 {
+        margin: 0;
+        font: 600 16px/1.2 var(--font-display);
+        text-transform: uppercase;
+    }
+
+    .config-close {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--color-text-secondary);
+        font-size: 22px;
+        line-height: 1;
+    }
+
+    .config-close:hover {
+        background: var(--color-surface-raised);
+        color: var(--color-text);
+    }
+
+    .config-fields {
+        display: grid;
+        gap: var(--space-2);
+    }
+
+    .config-fields .ui-label {
+        margin: var(--space-1) 0 -4px;
+    }
+
+    .refresh-cameras {
+        justify-self: end;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--color-brand-text);
+        font-size: 11px;
+        font-weight: 600;
+    }
+
+    .refresh-cameras:hover:not(:disabled) {
+        text-decoration: underline;
+    }
+
+    .refresh-cameras:disabled {
+        opacity: 0.5;
+    }
+
+    .edit-image {
+        width: 100%;
+        margin-top: var(--space-1);
     }
 
     .video-wrapper {
@@ -288,10 +448,14 @@
     .ws-message-overlay {
         position: absolute;
         z-index: 100;
+        top: 12px;
+        right: 12px;
         display: flex;
-        justify-content: center;
-        width: min(94%, 560px);
-        max-width: 96%;
+        width: min(340px, calc(100% - 24px));
+    }
+
+    .ws-message-overlay.positioned {
+        right: auto;
         transform: translate(-50%, 0);
     }
 

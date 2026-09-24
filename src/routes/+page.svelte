@@ -4,7 +4,7 @@
 	import IframeSection from "$lib/components/IframeSection.svelte";
 	import { defaultCamSettings } from "$lib/constants";
 	import { LiveScoringClient, type ScoringStatus } from "$lib/liveScoring";
-	import { listBoards, matchForBoard, parseScoringEventUrl, type LiveMatch } from "$lib/scoring";
+	import { listBoards, parseScoringEventUrl, teamScoreForBoards, type LiveMatch } from "$lib/scoring";
 	import type { CamSettings, CamSetting } from "$lib/types";
 
 	// Zustand für verfügbare Geräte und ausgewählte IDs
@@ -17,6 +17,7 @@
 	let cam2Label = "Gast";
 	let showFloatingWebcam = false;
 	let settingsOpen = false;
+	let activeCameraSettings: 'cam1' | 'cam2' | null = null;
 	let settingsButton: HTMLButtonElement;
 	let cam1View: CameraView;
 	let cam2View: CameraView;
@@ -62,13 +63,15 @@
 	let cam2BoardKey = "";
 	$: cam1Boards = listBoards(matches, [cam1BoardKey]);
 	$: cam2Boards = listBoards(matches, [cam2BoardKey]);
+	$: teamScore = teamScoreForBoards(matches, [cam1BoardKey, cam2BoardKey]);
 
-	// Scoreboard Positions (Percent)
-	let cam1ScorePos = { x: 50, y: 10 };
-	let cam2ScorePos = { x: 50, y: 10 };
+	// Unmoved scoreboards sit at the top right; dragged positions use percentages.
+	let cam1ScorePos: { x: number | null; y: number | null } = { x: null, y: null };
+	let cam2ScorePos: { x: number | null; y: number | null } = { x: null, y: null };
 
 	let isDraggingScore1 = false;
 	let isDraggingScore2 = false;
+	let scoreDragOffset = { x: 0, y: 0 };
 
 	const scoringStatusText: Record<ScoringStatus, string> = {
 		idle: 'Kein Event verbunden',
@@ -78,10 +81,11 @@
 		error: 'Scoring derzeit nicht erreichbar',
 	};
 
-	async function openSettings(focusId = 'scoring-event-url'): Promise<void> {
+	async function openSettings(): Promise<void> {
+		activeCameraSettings = null;
 		settingsOpen = true;
 		await tick();
-		document.getElementById(focusId)?.focus();
+		document.getElementById('scoring-event-url')?.focus();
 	}
 
 	async function closeSettings(): Promise<void> {
@@ -90,16 +94,37 @@
 		settingsButton?.focus();
 	}
 
+	async function toggleCameraSettings(slot: 'cam1' | 'cam2'): Promise<void> {
+		const closing = activeCameraSettings === slot;
+		settingsOpen = false;
+		activeCameraSettings = closing ? null : slot;
+		await tick();
+		document.getElementById(closing ? `camera-config-trigger-${slot}` : `cam-select-${slot}`)?.focus();
+	}
+
+	async function closeCameraSettings(): Promise<void> {
+		const slot = activeCameraSettings;
+		if (!slot) return;
+		activeCameraSettings = null;
+		await tick();
+		document.getElementById(`camera-config-trigger-${slot}`)?.focus();
+	}
+
 	function handleWindowKeydown(event: KeyboardEvent): void {
-		if (event.key === 'Escape' && settingsOpen) {
+		if (event.key !== 'Escape') return;
+		if (settingsOpen) {
 			event.preventDefault();
 			closeSettings();
+		} else if (activeCameraSettings) {
+			event.preventDefault();
+			closeCameraSettings();
 		}
 	}
 
 	async function beginCameraEdit(slot: 'cam1' | 'cam2'): Promise<void> {
 		if (editingCam || !(slot === 'cam1' ? cam1Ready : cam2Ready)) return;
 		settingsOpen = false;
+		activeCameraSettings = null;
 		await tick();
 		(slot === 'cam1' ? cam1View : cam2View)?.openEditor();
 		await tick();
@@ -107,13 +132,13 @@
 	}
 
 	async function finishCameraEdit(): Promise<void> {
+		const slot = editingCam;
 		editingCam = null;
 		await tick();
-		settingsButton?.focus();
+		if (slot) document.getElementById(`camera-config-trigger-${slot}`)?.focus();
 	}
 
-	function updateBoard(slot: 'cam1' | 'cam2', event: Event): void {
-		const board = (event.currentTarget as HTMLSelectElement).value;
+	function updateBoard(slot: 'cam1' | 'cam2', board: string): void {
 		if (slot === 'cam1') cam1BoardKey = board;
 		else cam2BoardKey = board;
 		saveBoardSelection();
@@ -151,6 +176,12 @@
 	function startScoreDrag(cam: 1 | 2, e: MouseEvent | TouchEvent) {
 		e.preventDefault();
 		e.stopPropagation();
+		const pointer = 'touches' in e ? e.touches[0] : e;
+		const overlay = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		scoreDragOffset = {
+			x: pointer.clientX - overlay.left - overlay.width / 2,
+			y: pointer.clientY - overlay.top,
+		};
 		if (cam === 1) isDraggingScore1 = true;
 		else isDraggingScore2 = true;
 	}
@@ -173,8 +204,8 @@
 		const overlay = container.querySelector<HTMLElement>('.ws-message-overlay');
 		const halfWidth = (overlay?.offsetWidth ?? 0) / 2;
 		const height = overlay?.offsetHeight ?? 0;
-		const x = Math.max(halfWidth, Math.min(rect.width - halfWidth, clientX - rect.left));
-		const y = Math.max(0, Math.min(rect.height - height, clientY - rect.top));
+		const x = Math.max(halfWidth, Math.min(rect.width - halfWidth, clientX - rect.left - scoreDragOffset.x));
+		const y = Math.max(0, Math.min(rect.height - height, clientY - rect.top - scoreDragOffset.y));
 		const next = { x: x / rect.width * 100, y: y / rect.height * 100 };
 		if (isDraggingScore1) cam1ScorePos = next;
 		else cam2ScorePos = next;
@@ -421,10 +452,10 @@
                 aria-live="polite">
                 {scoringStatusText[scoringStatus]}{scoringUrl && matches.length ? ' · ' + matches.length + (matches.length === 1 ? ' Match' : ' Matches') : ''}
             </span>
-            <button type="button" class="ui-button ui-button--primary settings-trigger"
+            <button type="button" class="ui-button ui-button--secondary settings-trigger"
                 bind:this={settingsButton} aria-controls="settings-panel" aria-expanded={settingsOpen}
                 on:click={() => settingsOpen ? closeSettings() : openSettings()}>
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
                     stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
                     <path d="M3 6h18M3 12h18M3 18h18" />
                     <circle cx="8" cy="6" r="2" fill="var(--color-background)" />
@@ -445,57 +476,83 @@
     {/if}
 
     <div class="content-area" bind:this={contentArea}>
-        <div class="camera-section" style="height: {showIframe ? topHeight : 100}%;">
-            <CameraView
-                bind:this={cam1View}
-                camId="cam1"
-                width={leftWidth}
-                bind:settings={camSettings.cam1}
-                editLocked={editingCam !== null}
-                bind:selectedDeviceId={selectedCam1}
-                bind:label={cam1Label}
-                bind:containerElement={container1}
-                bind:boardKey={cam1BoardKey}
-                bind:scorePos={cam1ScorePos}
-                bind:ready={cam1Ready}
-                scoringStatus={scoringStatus}
-                {matches}
-                on:configure={() => openSettings('cam-select-cam1')}
-                on:editStart={() => (editingCam = "cam1")}
-                on:editEnd={finishCameraEdit}
-                on:scoreDragStart={(event) => startScoreDrag(1, event.detail.originalEvent)}
-            />
+        <div class="broadcast-stage" style="height: {showIframe ? topHeight : 100}%;">
+            <div class="camera-section">
+                <CameraView
+                    bind:this={cam1View}
+                    camId="cam1"
+                    width={leftWidth}
+                    bind:settings={camSettings.cam1}
+                    editLocked={editingCam !== null}
+                    bind:selectedDeviceId={selectedCam1}
+                    bind:label={cam1Label}
+                    bind:containerElement={container1}
+                    bind:boardKey={cam1BoardKey}
+                    bind:scorePos={cam1ScorePos}
+                    bind:ready={cam1Ready}
+                    {videoDevices}
+                    availableBoards={cam1Boards}
+                    {checkingCameras}
+                    configOpen={activeCameraSettings === 'cam1'}
+                    scoringStatus={scoringStatus}
+                    {matches}
+                    on:configure={() => toggleCameraSettings('cam1')}
+                    on:boardChange={(event) => updateBoard('cam1', event.detail.board)}
+                    on:refreshDevices={getDevices}
+                    on:editRequest={() => beginCameraEdit('cam1')}
+                    on:editStart={() => (editingCam = "cam1")}
+                    on:editEnd={finishCameraEdit}
+                    on:scoreDragStart={(event) => startScoreDrag(1, event.detail.originalEvent)}
+                />
 
-            <div class="resizer-horizontal" role="slider" aria-label="Kamerabreite anpassen"
-                aria-orientation="vertical" aria-valuemin="10" aria-valuemax="90"
-                aria-valuenow={Math.round(leftWidth)} tabindex="0"
-                on:mousedown={startHorizontalDrag} on:touchstart={startHorizontalDrag}
-                on:keydown={(event) => {
-                    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-                        event.preventDefault();
-                        leftWidth = Math.max(10, Math.min(90, leftWidth + (event.key === 'ArrowRight' ? 5 : -5)));
-                    }
-                }}><span></span></div>
+                <div class="resizer-horizontal" role="slider" aria-label="Kamerabreite anpassen"
+                    aria-orientation="vertical" aria-valuemin="10" aria-valuemax="90"
+                    aria-valuenow={Math.round(leftWidth)} tabindex="0"
+                    on:mousedown={startHorizontalDrag} on:touchstart={startHorizontalDrag}
+                    on:keydown={(event) => {
+                        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                            event.preventDefault();
+                            leftWidth = Math.max(10, Math.min(90, leftWidth + (event.key === 'ArrowRight' ? 5 : -5)));
+                        }
+                    }}><span></span></div>
 
-            <CameraView
-                bind:this={cam2View}
-                camId="cam2"
-                width={100 - leftWidth}
-                bind:settings={camSettings.cam2}
-                editLocked={editingCam !== null}
-                bind:selectedDeviceId={selectedCam2}
-                bind:label={cam2Label}
-                bind:containerElement={container2}
-                bind:boardKey={cam2BoardKey}
-                bind:scorePos={cam2ScorePos}
-                bind:ready={cam2Ready}
-                scoringStatus={scoringStatus}
-                {matches}
-                on:configure={() => openSettings('cam-select-cam2')}
-                on:editStart={() => (editingCam = "cam2")}
-                on:editEnd={finishCameraEdit}
-                on:scoreDragStart={(event) => startScoreDrag(2, event.detail.originalEvent)}
-            />
+                <CameraView
+                    bind:this={cam2View}
+                    camId="cam2"
+                    width={100 - leftWidth}
+                    bind:settings={camSettings.cam2}
+                    editLocked={editingCam !== null}
+                    bind:selectedDeviceId={selectedCam2}
+                    bind:label={cam2Label}
+                    bind:containerElement={container2}
+                    bind:boardKey={cam2BoardKey}
+                    bind:scorePos={cam2ScorePos}
+                    bind:ready={cam2Ready}
+                    {videoDevices}
+                    availableBoards={cam2Boards}
+                    {checkingCameras}
+                    configOpen={activeCameraSettings === 'cam2'}
+                    scoringStatus={scoringStatus}
+                    {matches}
+                    on:configure={() => toggleCameraSettings('cam2')}
+                    on:boardChange={(event) => updateBoard('cam2', event.detail.board)}
+                    on:refreshDevices={getDevices}
+                    on:editRequest={() => beginCameraEdit('cam2')}
+                    on:editStart={() => (editingCam = "cam2")}
+                    on:editEnd={finishCameraEdit}
+                    on:scoreDragStart={(event) => startScoreDrag(2, event.detail.originalEvent)}
+                />
+            </div>
+
+            {#if teamScore}
+                <div class="team-score-strip" class:stale={scoringStatus !== 'live'} aria-live="polite">
+                    <span class="team-name" title={teamScore.home}>{teamScore.home}</span>
+                    <span class="team-result" aria-label="Teamstand {teamScore.home} {teamScore.homeScore} zu {teamScore.guestScore} {teamScore.guest}">
+                        <strong>{teamScore.homeScore}</strong><span>:</span><strong>{teamScore.guestScore}</strong>
+                    </span>
+                    <span class="team-name guest" title={teamScore.guest}>{teamScore.guest}</span>
+                </div>
+            {/if}
         </div>
 
         {#if showIframe}
@@ -544,71 +601,6 @@
                 </form>
                 {#if scoringError}<p class="field-error" role="alert">{scoringError}</p>{/if}
                 <p class="ui-help">{scoringStatusText[scoringStatus]}</p>
-            </section>
-
-            <section class="settings-section" aria-labelledby="cameras-title">
-                <div class="section-header">
-                    <h3 id="cameras-title" class="ui-section-title">Kameras</h3>
-                    <button type="button" class="text-action" on:click={getDevices}
-                        disabled={checkingCameras}>Neu suchen</button>
-                </div>
-                <div class="camera-config ui-panel">
-                    <h4>Kamera 01</h4>
-                    <label class="ui-label" for="cam-select-cam1">Quelle</label>
-                    <select class="ui-field" id="cam-select-cam1" bind:value={selectedCam1}
-                        disabled={editingCam !== null}>
-                        <option value="">Keine Kamera</option>
-                        {#each videoDevices as device}
-                            <option value={device.deviceId}>{device.label || 'Kamera'} ({device.deviceId.slice(0, 8)}…)</option>
-                        {/each}
-                    </select>
-                    <label class="ui-label" for="cam-label-cam1">Bezeichnung</label>
-                    <input class="ui-field" id="cam-label-cam1" type="text" maxlength="24" bind:value={cam1Label} />
-                    {#if scoringStatus !== 'idle' || cam1BoardKey}
-                        <label class="ui-label" for="board-select-cam1">Scoreboard</label>
-                        <select class="ui-field" id="board-select-cam1" value={cam1BoardKey}
-                            on:change={(event) => updateBoard('cam1', event)}>
-                            <option value="">Kein Board</option>
-                            {#each cam1Boards as board}
-                                {@const match = matchForBoard(matches, board)}
-                                <option value={board}>B{board}{match ? ' · ' + match.matchPlayers.map((player) => player.playerName).join(' / ') : ' · kein Match'}</option>
-                            {/each}
-                        </select>
-                    {/if}
-                    <button type="button" class="ui-button ui-button--secondary ui-button--small"
-                        disabled={!cam1Ready || editingCam !== null} on:click={() => beginCameraEdit('cam1')}>
-                        Kamerabild bearbeiten
-                    </button>
-                </div>
-
-                <div class="camera-config ui-panel">
-                    <h4>Kamera 02</h4>
-                    <label class="ui-label" for="cam-select-cam2">Quelle</label>
-                    <select class="ui-field" id="cam-select-cam2" bind:value={selectedCam2}
-                        disabled={editingCam !== null}>
-                        <option value="">Keine Kamera</option>
-                        {#each videoDevices as device}
-                            <option value={device.deviceId}>{device.label || 'Kamera'} ({device.deviceId.slice(0, 8)}…)</option>
-                        {/each}
-                    </select>
-                    <label class="ui-label" for="cam-label-cam2">Bezeichnung</label>
-                    <input class="ui-field" id="cam-label-cam2" type="text" maxlength="24" bind:value={cam2Label} />
-                    {#if scoringStatus !== 'idle' || cam2BoardKey}
-                        <label class="ui-label" for="board-select-cam2">Scoreboard</label>
-                        <select class="ui-field" id="board-select-cam2" value={cam2BoardKey}
-                            on:change={(event) => updateBoard('cam2', event)}>
-                            <option value="">Kein Board</option>
-                            {#each cam2Boards as board}
-                                {@const match = matchForBoard(matches, board)}
-                                <option value={board}>B{board}{match ? ' · ' + match.matchPlayers.map((player) => player.playerName).join(' / ') : ' · kein Match'}</option>
-                            {/each}
-                        </select>
-                    {/if}
-                    <button type="button" class="ui-button ui-button--secondary ui-button--small"
-                        disabled={!cam2Ready || editingCam !== null} on:click={() => beginCameraEdit('cam2')}>
-                        Kamerabild bearbeiten
-                    </button>
-                </div>
             </section>
 
             <section class="settings-section" aria-labelledby="display-title">
@@ -707,6 +699,10 @@
     }
 
     .settings-trigger {
+        min-height: 34px;
+        gap: 6px;
+        padding: 0 10px;
+        font-size: 12px;
         white-space: nowrap;
     }
 
@@ -737,12 +733,64 @@
         padding: var(--space-2);
     }
 
+    .broadcast-stage {
+        display: flex;
+        flex: none;
+        flex-direction: column;
+        min-height: 0;
+    }
+
     .camera-section {
         position: relative;
         display: flex;
-        flex: none;
+        flex: 1;
         gap: var(--space-1);
         min-height: 0;
+    }
+
+    .team-score-strip {
+        display: grid;
+        flex: none;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        align-items: center;
+        gap: var(--space-3);
+        min-height: 48px;
+        margin-top: var(--space-1);
+        padding: 4px var(--space-3);
+        border: 1px solid var(--color-border);
+        border-top: 2px solid var(--color-brand);
+        border-radius: var(--radius-sm);
+        background: var(--color-surface);
+        color: var(--color-text);
+    }
+
+    .team-score-strip.stale {
+        border-top-color: var(--color-warning);
+    }
+
+    .team-name {
+        min-width: 0;
+        overflow: hidden;
+        font-size: 14px;
+        font-weight: 700;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .team-name.guest {
+        text-align: right;
+    }
+
+    .team-result {
+        display: flex;
+        align-items: baseline;
+        gap: 7px;
+        font: 600 26px/1 var(--font-display);
+        white-space: nowrap;
+    }
+
+    .team-result span {
+        color: var(--color-brand-text);
     }
 
     .resizer-horizontal,
@@ -808,7 +856,7 @@
         bottom: 0;
         display: flex;
         flex-direction: column;
-        width: min(400px, 38vw);
+        width: min(360px, 34vw);
         border-left: 1px solid #66696c;
         background: var(--color-surface);
         box-shadow: var(--shadow-panel);
@@ -872,7 +920,6 @@
     }
 
     .settings-form,
-    .camera-config,
     .iframe-settings,
     .display-actions {
         display: grid;
@@ -884,53 +931,12 @@
         width: 100%;
     }
 
-    .section-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: var(--space-2);
-    }
-
-    .text-action {
-        padding: 4px;
-        border: 0;
-        background: transparent;
-        color: var(--color-brand-text);
-        font-size: 12px;
-        font-weight: 600;
-    }
-
-    .text-action:hover:not(:disabled) {
-        text-decoration: underline;
-    }
-
-    .text-action:disabled {
-        opacity: 0.5;
-    }
-
-    .camera-config,
     .iframe-settings {
         padding: 12px;
     }
 
-    .camera-config + .camera-config {
-        margin-top: var(--space-2);
-    }
-
-    .camera-config h4 {
-        margin: 0 0 2px;
-        font: 600 16px/1.2 var(--font-display);
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-    }
-
-    .camera-config .ui-label,
     .iframe-settings .ui-label {
         margin: var(--space-1) 0 -4px;
-    }
-
-    .camera-config .ui-button {
-        margin-top: var(--space-1);
     }
 
     .field-error {

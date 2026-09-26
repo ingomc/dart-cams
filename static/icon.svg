@@ -1,6 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <circle cx="256" cy="256" r="256" fill="#333"/>
-  <circle cx="256" cy="256" r="200" fill="none" stroke="#fff" stroke-width="20"/>
-  <circle cx="256" cy="256" r="100" fill="none" stroke="#f00" stroke-width="20"/>
-  <circle cx="256" cy="256" r="40" fill="#f00"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">SCO Dartcams</title>
+  <rect width="512" height="512" rx="108" fill="#151719"/>
+  <circle cx="256" cy="256" r="184" fill="none" stroke="#3A3D40" stroke-width="16"/>
+  <circle cx="256" cy="256" r="140" fill="none" stroke="#F3ECEE" stroke-width="15"/>
+  <circle cx="256" cy="256" r="96" fill="none" stroke="#BE0826" stroke-width="20"/>
+  <circle cx="256" cy="256" r="48" fill="#98051E" stroke="#F3ECEE" stroke-width="13"/>
+  <circle cx="256" cy="256" r="12" fill="#FFFFFF"/>
+  <path d="M256 54v34M458 256h-34M256 458v-34M54 256h34" stroke="#BE0826" stroke-width="12" stroke-linecap="round"/>
 </svg>

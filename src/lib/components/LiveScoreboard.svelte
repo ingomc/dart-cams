@@ -2,6 +2,7 @@
     import type { MatchData } from '../types';
     import { displayAverage, displayNumber } from '../scoring';
     import { isWinner } from '../scoringCelebration';
+    import { TextMorph } from 'torph/svelte';
 
     export let data: MatchData;
     export let stale = false;
@@ -12,6 +13,7 @@
         {@const player = data.match.matchPlayers[index]}
         {@const winner = isWinner(player?.points)}
         {@const average = displayAverage(player)}
+        {@const remaining = displayNumber(player?.points)}
         <div class="player-row" class:active={data.match.currentplayerIndex === index}>
             <span class="player-name" title={player?.playerName || 'Unbekannt'}>
                 {#if data.match.currentplayerIndex === index}<span class="sr-only">Am Wurf: </span>{/if}
@@ -20,8 +22,18 @@
             <span class="stat average" aria-label="3-Dart-Average {average}">Ø {average}</span>
             <span class="stat legs" aria-label="Gewonnene Legs {displayNumber(player?.legs)}">{displayNumber(player?.legs)}</span>
             <span class="stat last-score" aria-label="Letzter Wurf {displayNumber(player?.lastScore)}">{displayNumber(player?.lastScore)}</span>
-            <span class="stat remaining" class:winner aria-label={winner ? `${player?.playerName || 'Unbekannt'}: Sieger` : `Restscore ${displayNumber(player?.points)}`}>
-                <strong>{winner ? 'Sieger' : displayNumber(player?.points)}</strong>
+            <span class="stat remaining" class:winner aria-label={winner ? `${player?.playerName || 'Unbekannt'}: Sieger` : `Restscore ${remaining}`}>
+                <strong>
+                    {#if winner}
+                        Sieger
+                    {:else if remaining === '–'}
+                        {remaining}
+                    {:else}
+                        {#key `${data.match.matchKey ?? ''}/${data.match.board ?? ''}/${player?.playerName ?? ''}`}
+                            <TextMorph text={remaining} duration={180} ease="ease-out" scale={false} respectReducedMotion={true} locale="de" />
+                        {/key}
+                    {/if}
+                </strong>
             </span>
         </div>
     {/each}

@@ -62,10 +62,10 @@ test("discovery rotates sessions on app restart, does not notify unchanged sessi
     Object.defineProperty(globalThis, "document", { value: savedDocument, configurable: true });
   }
 });
-function permissionBrowser(query, fetch) {
+function permissionBrowser(query, fetch, serviceWorker) {
   const original = Object.fromEntries(['navigator', 'document', 'fetch'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const doc = Object.assign(new EventTarget(), { hidden: false });
-  for (const [key, value] of Object.entries({ navigator: { permissions: { query } }, document: doc, fetch }))
+  for (const [key, value] of Object.entries({ navigator: { permissions: { query }, serviceWorker }, document: doc, fetch }))
     Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   return () => {
     for (const [key, descriptor] of Object.entries(original)) {
@@ -133,6 +133,47 @@ test("denied legacy Chrome permission is reported without sending repeated disco
   } finally { connection.stop(); restore(); }
 });
 
+test("discovery retries when the worker intercepting loopback requests is replaced", async () => {
+  const permission = Object.assign(new EventTarget(), { state: 'prompt' });
+  const serviceWorker = new EventTarget();
+  const states = [];
+  let legacyWorker = true;
+  let requests = 0;
+  const restore = permissionBrowser(async () => permission, async () => {
+    requests++;
+    if (legacyWorker) throw new TypeError('Loopback permission denied in service worker');
+    permission.state = 'granted';
+    return { ok: true, json: async () => ({ service: 'dartrectify', protocol_version: 1, token: 'e'.repeat(64), boards: ['home', 'guest'] }) };
+  }, serviceWorker);
+  const connection = new DartRectifyDiscovery(value => states.push(value.status));
+  try {
+    connection.start();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(states.at(-1)).toBe('permission');
+    legacyWorker = false;
+    serviceWorker.dispatchEvent(new Event('controllerchange'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(states.at(-1)).toBe('online');
+    connection.stop();
+    serviceWorker.dispatchEvent(new Event('controllerchange'));
+    expect(requests).toBe(2);
+  } finally { connection.stop(); restore(); }
+});
+
+test("a new worker activates without waiting for old Dartcams tabs to close", async () => {
+  const handlers = {};
+  const order = [];
+  const code = readFileSync(new URL("../src/service-worker.js", import.meta.url), "utf8").replace("import { build, files, version } from '$service-worker';", "const build=[], files=[], version='test';");
+  runInNewContext(code, {
+    self: { addEventListener: (name, handler) => handlers[name] = handler, skipWaiting: async () => order.push('activate') },
+    caches: { open: async () => ({ addAll: async () => order.push('assets ready') }) }
+  });
+  let installation;
+  handlers.install({ waitUntil: promise => installation = promise });
+  await installation;
+  expect(order).toEqual(['assets ready', 'activate']);
+});
+
 test("service worker leaves local sessions, frames and MJPEG requests entirely to the browser", () => {
   const handlers = {};
   const code = readFileSync(new URL("../src/service-worker.js", import.meta.url), "utf8").replace("import { build, files, version } from '$service-worker';", "const build=[], files=[], version='test';");
@@ -153,12 +194,14 @@ test("service worker activation removes previously cached local sessions and ima
     ["https://cams.ingomc.de/index.html", "website"]
   ]);
   const removedCaches = [];
+  let claimed = false;
   const cache = {
     keys: async () => [...cached.keys()].map(url => ({ url })),
     delete: async request => cached.delete(request.url)
   };
   runInNewContext(code, { URL,
-    self: { location: { origin: "https://cams.ingomc.de" }, addEventListener: (name, handler) => handlers[name] = handler },
+    self: { location: { origin: "https://cams.ingomc.de" }, addEventListener: (name, handler) => handlers[name] = handler,
+      clients: { claim: async () => { expect([...cached.keys()]).toEqual(["https://cams.ingomc.de/index.html"]); claimed = true; } } },
     caches: { keys: async () => ["cache-old", "cache-test"], delete: async name => removedCaches.push(name), open: async () => cache }
   });
   let activation;
@@ -166,4 +209,5 @@ test("service worker activation removes previously cached local sessions and ima
   await activation;
   expect(removedCaches).toEqual(["cache-old"]);
   expect([...cached.keys()]).toEqual(["https://cams.ingomc.de/index.html"]);
+  expect(claimed).toBe(true);
 });

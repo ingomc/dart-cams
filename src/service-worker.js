@@ -18,6 +18,9 @@ self.addEventListener('install', (event) => {
 	async function addFilesToCache() {
 		const cache = await caches.open(CACHE);
 		await cache.addAll(ASSETS);
+		// Replace legacy workers that still intercept loopback requests, even
+		// while Dartcams is open in another tab or installed as a PWA.
+		await self.skipWaiting();
 	}
 
 	event.waitUntil(addFilesToCache());
@@ -35,6 +38,7 @@ self.addEventListener('activate', (event) => {
         await deleteOldCaches();
         const cache = await caches.open(CACHE);
         for (const request of await cache.keys()) if (isLocalBridge(new URL(request.url))) await cache.delete(request);
+        await self.clients.claim();
     })());
 });
 
@@ -62,7 +66,7 @@ self.addEventListener('fetch', (event) => {
 
 			return response;
 		} catch {
-			return cache.match(event.request);
+			return (await cache.match(event.request)) ?? Response.error();
 		}
 	}
 

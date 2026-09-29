@@ -46,6 +46,7 @@ export class DartRectifyDiscovery {
         this.running = true;
         const lifetime = ++this.lifetime;
         document.addEventListener('visibilitychange', this.visibility);
+        navigator.serviceWorker?.addEventListener('controllerchange', this.visibility);
         void this.observePermission(lifetime).then(() => {
             if (this.running && lifetime === this.lifetime) this.visibility();
         });
@@ -56,6 +57,7 @@ export class DartRectifyDiscovery {
         ++this.lifetime;
         this.permission?.removeEventListener('change', this.visibility); this.permission = undefined;
         document.removeEventListener('visibilitychange', this.visibility);
+        navigator.serviceWorker?.removeEventListener('controllerchange', this.visibility);
     }
     private async poll(epoch: number) {
         if (!this.running || document.hidden || epoch !== this.epoch) return;

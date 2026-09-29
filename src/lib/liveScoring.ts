@@ -1,5 +1,5 @@
 import type { LiveMatch, ScoringEvent } from './scoring.ts';
-import { upsertMatch } from './scoring.ts';
+import { boardId, mergeMatchSnapshot, sameMatch, upsertMatch } from './scoring.ts';
 import { detectScoringCelebration, type ScoringCelebration } from './scoringCelebration.ts';
 
 export type ScoringStatus = 'idle' | 'connecting' | 'live' | 'offline' | 'error';
@@ -91,9 +91,10 @@ export class LiveScoringClient {
                 ? (json as { data: unknown }).data : null;
             if (!Array.isArray(data)) throw new Error('Ungültige Match-Daten');
             const snapshot = data.filter((match): match is LiveMatch =>
-                typeof match === 'object' && match !== null && Array.isArray(match.matchPlayers));
-            this.matches = this.updatesDuringRefresh.reduce(upsertMatch, snapshot);
-            this.callbacks.onMatches(this.matches);
+                typeof match === 'object' && match !== null && Array.isArray(match.matchPlayers) &&
+                this.belongsToEvent(match));
+            this.matches = this.updatesDuringRefresh.reduce(upsertMatch, mergeMatchSnapshot(this.matches, snapshot));
+            this.callbacks.onMatches(this.matches.filter((match) => match.status !== 4));
             if (this.status === 'error') this.setStatus('offline');
         } catch (error) {
             if (!abort.signal.aborted && generation === this.generation && this.status !== 'live') {
@@ -101,8 +102,16 @@ export class LiveScoringClient {
                 this.setStatus('error');
             }
         } finally {
-            if (this.abort === abort) this.abort = null;
+            if (this.abort === abort) {
+                this.abort = null;
+                this.updatesDuringRefresh = [];
+            }
         }
+    }
+
+    private belongsToEvent(match: LiveMatch): boolean {
+        return !!this.event && (match.database === undefined || String(match.database) === this.event.databaseId) &&
+            (match.groupKey === undefined || String(match.groupKey) === this.event.groupKey);
     }
 
     private openSocket(generation: number): void {
@@ -155,6 +164,7 @@ export class LiveScoringClient {
                     void this.refresh(generation);
                     continue;
                 }
+                if (!frame.startsWith('MESSAGE\n')) continue;
                 const bodyStart = frame.indexOf('\n\n');
                 if (bodyStart < 0) continue;
                 const payload: unknown = JSON.parse(frame.slice(bodyStart + 2).replace(/\0$/, ''));
@@ -163,12 +173,15 @@ export class LiveScoringClient {
                 if (typeof match !== 'object' || match === null || !('matchPlayers' in match) ||
                     !Array.isArray(match.matchPlayers)) continue;
                 const incoming = match as LiveMatch;
+                if (!this.belongsToEvent(incoming)) continue;
                 const previous = this.matches.find((item) =>
-                    item.matchKey === incoming.matchKey && String(item.board) === String(incoming.board)) ?? null;
-                const celebration = detectScoringCelebration(previous, incoming);
-                this.matches = upsertMatch(this.matches, incoming);
-                this.updatesDuringRefresh.push(match as LiveMatch);
-                this.callbacks.onMatches(this.matches);
+                    sameMatch(item, incoming) && boardId(item.board) === boardId(incoming.board)) ?? null;
+                const updated = upsertMatch(this.matches, incoming);
+                if (updated === this.matches) continue;
+                const celebration = incoming.status === 4 ? null : detectScoringCelebration(previous, incoming);
+                this.matches = updated;
+                if (this.abort) this.updatesDuringRefresh.push(incoming);
+                this.callbacks.onMatches(this.matches.filter((match) => match.status !== 4));
                 if (celebration) this.callbacks.onCelebration?.(celebration);
             }
         } catch (error) {

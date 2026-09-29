@@ -63,7 +63,12 @@ export interface MatchPlayer {
 
 export interface MatchData {
     match: {
+        id?: number;
         matchKey?: string; // Added optional matchKey as it was used in code
+        database?: string;
+        groupKey?: string;
+        created?: string;
+        status?: number;
         matchPlayers: MatchPlayer[];
         mode: string;
         roundName: string;

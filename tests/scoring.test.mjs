@@ -6,6 +6,7 @@ import {
     displayNumber,
     listBoards,
     matchForBoard,
+    mergeMatchSnapshot,
     parseScoringEventUrl,
     teamScoreForBoards,
     upsertMatch,
@@ -134,4 +135,132 @@ test('a lost socket marks retained scores as offline', async () => {
     assert.equal(statuses.at(-1), 'offline');
     assert.equal(seen.at(-1)[0].matchKey, 'live');
     client.stop();
+});
+
+function timedMatch(board, key, created, updated = created, points = 501) {
+    const data = match(board, key);
+    return { ...data, database: '6', groupKey: '32231', status: 1,
+        created: `2026-09-29T${created}`, lastUpdate: `2026-09-29T${updated}`,
+        matchPlayers: data.matchPlayers.map((player) => ({ ...player, playerName: `${key}: ${player.playerName}`, points })),
+    };
+}
+
+test('three boards keep their own players and scores through interleaved and stale updates', () => {
+    const boards = [1, 2, 3].map((board) => timedMatch(board, `game-${board}`, '20:00:00'));
+    let matches = [...boards];
+    for (const [board, points] of [[3, 421], [1, 321], [3, 321], [2, 401]]) {
+        matches = upsertMatch(matches, { ...boards[board - 1], board: String(board),
+            lastUpdate: `2026-09-29T20:01:${points === 321 ? '02' : '01'}`,
+            matchPlayers: boards[board - 1].matchPlayers.map((player) => ({ ...player, points })),
+        });
+    }
+    matches = upsertMatch(matches, boards[0]);
+    assert.deepEqual(listBoards(matches), ['1', '2', '3']);
+    for (const [board, points] of [[1, 321], [2, 401], [3, 321]]) {
+        const selected = matchForBoard(matches, String(board));
+        assert.equal(selected.matchKey, `game-${board}`);
+        assert.equal(selected.matchPlayers[0].playerName, `game-${board}: A Long Name`);
+        assert.equal(selected.matchPlayers[0].points, points);
+    }
+});
+
+test('a reused board keeps its newest game regardless of snapshot order or late old-game updates', () => {
+    const old = timedMatch(1, 'semifinal', '20:00:00', '20:30:00', 40);
+    const current = timedMatch(1, 'final', '20:25:00', '20:26:00', 170);
+    for (const snapshot of [[old, current], [current, old]]) {
+        assert.equal(matchForBoard(snapshot, '1')?.matchKey, 'final');
+        const matches = mergeMatchSnapshot([], snapshot);
+        assert.equal(matches.length, 1);
+        assert.equal(matchForBoard(matches, '1')?.matchPlayers[0].points, 170);
+        assert.equal(matchForBoard(upsertMatch(matches, old), '1')?.matchKey, 'final');
+        assert.equal(matchForBoard(upsertMatch(matches, { ...old, status: 4 }), '1')?.matchKey, 'final');
+    }
+});
+
+test('3K status 4 removes only its own match and an old refresh cannot bring it back', () => {
+    const first = timedMatch(1, 'first', '20:00:00', '20:10:00.277067708');
+    const third = timedMatch(3, 'third', '20:00:00', '20:10:00');
+    const removed = upsertMatch([first, third], { ...first, status: 4, lastUpdate: '2026-09-29T20:10:00' });
+    assert.equal(matchForBoard(removed, '1'), null);
+    assert.equal(matchForBoard(removed, '3'), third);
+    assert.deepEqual(listBoards(removed, ['1']), ['1', '3']);
+    assert.equal(matchForBoard(mergeMatchSnapshot(removed, [first, third]), '1'), null);
+    const next = timedMatch(1, 'next', '20:11:00');
+    assert.equal(matchForBoard(upsertMatch(removed, next), '1'), next);
+});
+
+test('refresh retains newer live scores while removing boards absent from the snapshot', () => {
+    const before = timedMatch(1, 'first', '20:00:00', '20:01:00', 501);
+    const live = timedMatch(1, 'first', '20:00:00', '20:02:00', 321);
+    const missing = timedMatch(2, 'missing', '20:00:00');
+    const third = timedMatch(3, 'third', '20:00:00');
+    const merged = mergeMatchSnapshot([live, missing], [before, third]);
+    assert.equal(matchForBoard(merged, '1'), live);
+    assert.equal(matchForBoard(merged, '2'), null);
+    assert.equal(matchForBoard(merged, '3'), third);
+    const correction = timedMatch(1, 'first', '20:00:00', '20:03:00', 501);
+    assert.equal(matchForBoard(mergeMatchSnapshot(merged, [correction]), '1'), correction);
+});
+
+test('provider match IDs distinguish games even when match keys are empty', () => {
+    const first = { ...match(1, ''), id: 7827706 };
+    const third = { ...match(3, ''), id: 7827588 };
+    const matches = upsertMatch([first], third);
+    assert.equal(matchForBoard(matches, '1'), first);
+    assert.equal(matchForBoard(matches, '3'), third);
+    const moved = upsertMatch(matches, { ...first, board: 2 });
+    assert.equal(matchForBoard(moved, '1'), null);
+    assert.equal(matchForBoard(moved, '2')?.id, first.id);
+});
+
+test('client merges refreshes and three-board packets without stale scores or false celebrations', async () => {
+    const requests = [];
+    const seen = [];
+    const celebrations = [];
+    let socket;
+    const client = new LiveScoringClient({
+        onMatches: (matches) => seen.push(matches), onStatus() {},
+        onCelebration: (event) => celebrations.push(event),
+    }, {
+        fetchImpl: () => new Promise((resolve) => requests.push(resolve)),
+        socketFactory: () => (socket = { close() {}, send() {} }),
+    });
+    const sendFrame = (frame) => socket.onmessage({ data: `a${JSON.stringify([frame])}` });
+    const send = (data) => sendFrame(`MESSAGE\n\n${JSON.stringify({ match: data })}\0`);
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const boards = [1, 2, 3].map((board) => timedMatch(board, `game-${board}`, '20:00:00'));
+    try {
+        client.start(parseScoringEventUrl('https://live.3k-darts.com/event/6/32231'));
+        requests[0]({ ok: true, json: async () => ({ data: boards }) });
+        await flush();
+        const live = { ...boards[0], lastUpdate: '2026-09-29T20:02:00',
+            matchPlayers: boards[0].matchPlayers.map((player) => ({ ...player, points: 321, lastScore: 180, darts: 3 })),
+        };
+        send(live);
+        assert.equal(celebrations.length, 1);
+        sendFrame('CONNECTED\n\n\0'); // Reconnect refresh starts after the live score.
+        send({ ...boards[2], lastUpdate: '2026-09-29T20:03:00',
+            matchPlayers: boards[2].matchPlayers.map((player) => ({ ...player, points: 401 })),
+        });
+        requests[1]({ ok: true, json: async () => ({ data: [...boards].reverse() }) });
+        await flush();
+        assert.equal(matchForBoard(seen.at(-1), '1')?.matchPlayers[0].points, 321);
+        assert.equal(matchForBoard(seen.at(-1), '2')?.matchPlayers[0].points, 501);
+        assert.equal(matchForBoard(seen.at(-1), '3')?.matchPlayers[0].points, 401);
+        // Late packets must neither roll scores back nor generate another 180.
+        send({ ...boards[0], lastUpdate: '2026-09-29T20:01:00',
+            matchPlayers: live.matchPlayers.map((player) => ({ ...player, points: 141 })),
+        });
+        send({ ...live, groupKey: 'another-event' });
+        send({ ...live, database: '5' });
+        assert.equal(matchForBoard(seen.at(-1), '1')?.matchPlayers[0].points, 321);
+        assert.equal(celebrations.length, 1);
+        send({ ...live, status: 4 });
+        assert.equal(seen.at(-1).length, 2);
+        assert.equal(matchForBoard(seen.at(-1), '1'), null);
+        assert.equal(matchForBoard(seen.at(-1), '3')?.matchPlayers[0].points, 401);
+        assert.equal(celebrations.length, 1);
+    } finally {
+        client.stop();
+    }
 });

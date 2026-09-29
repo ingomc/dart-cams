@@ -62,6 +62,77 @@ test("discovery rotates sessions on app restart, does not notify unchanged sessi
     Object.defineProperty(globalThis, "document", { value: savedDocument, configurable: true });
   }
 });
+function permissionBrowser(query, fetch) {
+  const original = Object.fromEntries(['navigator', 'document', 'fetch'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const doc = Object.assign(new EventTarget(), { hidden: false });
+  for (const [key, value] of Object.entries({ navigator: { permissions: { query } }, document: doc, fetch }))
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  return () => {
+    for (const [key, descriptor] of Object.entries(original)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  };
+}
+
+test("a browser permission prompt survives the network timeout and granting permission reconnects", async () => {
+  const permission = Object.assign(new EventTarget(), { state: 'prompt' });
+  const states = [];
+  let pendingSignal;
+  let requests = 0;
+  const restore = permissionBrowser(async () => permission, async (_url, options) => {
+    requests++;
+    if (permission.state === 'prompt') {
+      pendingSignal = options.signal;
+      return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))));
+    }
+    return { ok: true, json: async () => ({ service: 'dartrectify', protocol_version: 1, token: 'd'.repeat(64), boards: ['home', 'guest'] }) };
+  });
+  const connection = new DartRectifyDiscovery(value => states.push(value));
+  try {
+    connection.start();
+    await new Promise(resolve => setTimeout(resolve, 1600));
+    expect(requests).toBe(1);
+    expect(pendingSignal.aborted).toBe(false);
+    expect(states.at(-1).status).toBe('permission');
+    permission.state = 'granted';
+    permission.dispatchEvent(new Event('change'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(states.at(-1).status).toBe('online');
+    expect(states.at(-1).token).toBe('d'.repeat(64));
+    permission.state = 'denied';
+    permission.dispatchEvent(new Event('change'));
+    expect(states.at(-1).status).toBe('blocked');
+    expect(states.at(-1).token).toBe('');
+    expect(requests).toBe(2);
+    connection.stop();
+    permission.state = 'granted';
+    permission.dispatchEvent(new Event('change'));
+    expect(requests).toBe(2);
+  } finally { connection.stop(); restore(); }
+});
+
+test("denied legacy Chrome permission is reported without sending repeated discovery requests", async () => {
+  const permission = Object.assign(new EventTarget(), { state: 'denied' });
+  const queried = [];
+  const states = [];
+  let requests = 0;
+  const restore = permissionBrowser(async ({ name }) => {
+    queried.push(name);
+    if (name === 'loopback-network') throw new TypeError('Unsupported permission');
+    return permission;
+  }, async () => { requests++; throw new TypeError('Failed to fetch'); });
+  const connection = new DartRectifyDiscovery(value => states.push(value.status));
+  try {
+    connection.start();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    connection.retry();
+    expect(queried).toEqual(['loopback-network', 'local-network-access']);
+    expect(states).toEqual(['blocked']);
+    expect(requests).toBe(0);
+  } finally { connection.stop(); restore(); }
+});
+
 test("service worker leaves local sessions, frames and MJPEG requests entirely to the browser", () => {
   const handlers = {};
   const code = readFileSync(new URL("../src/service-worker.js", import.meta.url), "utf8").replace("import { build, files, version } from '$service-worker';", "const build=[], files=[], version='test';");

@@ -4,6 +4,10 @@ import { build, files, version } from '$service-worker';
 // Create a unique cache name for this deployment
 const CACHE = `cache-${version}`;
 
+function isLocalBridge(url) {
+    return ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) && url.origin !== self.location.origin;
+}
+
 const ASSETS = [
 	...build, // the app itself
 	...files  // everything in `static`
@@ -27,12 +31,16 @@ self.addEventListener('activate', (event) => {
 		}
 	}
 
-	event.waitUntil(deleteOldCaches());
+	event.waitUntil((async () => {
+        await deleteOldCaches();
+        const cache = await caches.open(CACHE);
+        for (const request of await cache.keys()) if (isLocalBridge(new URL(request.url))) await cache.delete(request);
+    })());
 });
 
 self.addEventListener('fetch', (event) => {
 	// ignore POST requests etc
-	if (event.request.method !== 'GET') return;
+	if (event.request.method !== 'GET' || isLocalBridge(new URL(event.request.url))) return;
 
 	async function respond() {
 		const url = new URL(event.request.url);

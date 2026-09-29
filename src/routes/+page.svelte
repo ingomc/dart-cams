@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from "svelte";
 	import { sourceKey, restoreSources, rectifiedSettings, type CameraSource } from '$lib/cameraSources';
-	import { DartRectifyDiscovery, initialConnection, type BridgeConnection } from '$lib/dartrectify/connection';
+	import { DartRectifyDiscovery, initialConnection, connectionLabels, connectionHelp, type BridgeConnection } from '$lib/dartrectify/connection';
 	let bridge: BridgeConnection = initialConnection;
 	let discovery: DartRectifyDiscovery;
 	let sourcesRestored = false;
@@ -429,7 +429,11 @@
             <span class="app-subtitle">Live-Kameraansicht</span>
         </div>
         <div class="top-actions">
-            <span class="ui-badge" class:ui-badge--success={bridge.status === 'online'} title="Lokale Bildquelle auf diesem PC">DartRectify {bridge.status === 'online' ? 'verbunden' : bridge.status === 'searching' ? 'wird gesucht' : 'offline'}</span>
+            <span class="ui-badge" class:ui-badge--success={bridge.status === 'online'} class:ui-badge--error={bridge.status === 'blocked'} title={connectionHelp[bridge.status]} aria-live="polite">DartRectify {connectionLabels[bridge.status]}</span>
+            {#if bridge.status !== 'online'}
+                <button type="button" class="ui-button ui-button--secondary ui-button--small"
+                    title={connectionHelp[bridge.status]} on:click={() => discovery?.retry()}>DartRectify verbinden</button>
+            {/if}
             <span class="ui-badge {scoringStatus === 'live' ? 'ui-badge--success' : scoringStatus === 'error' ? 'ui-badge--error' : scoringStatus === 'connecting' || scoringStatus === 'offline' ? 'ui-badge--warning' : ''}"
                 aria-live="polite">
                 {scoringStatusText[scoringStatus]}{scoringUrl && matches.length ? ' · ' + matches.length + (matches.length === 1 ? ' Match' : ' Matches') : ''}
@@ -448,6 +452,10 @@
             </button>
         </div>
     </header>
+
+    {#if bridge.status === 'permission' || bridge.status === 'blocked'}
+        <div class="camera-notice" role="status">{connectionHelp[bridge.status]}</div>
+    {/if}
 
     {#if cameraError}
         <div class="camera-notice" role="alert">

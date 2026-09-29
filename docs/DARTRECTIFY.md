@@ -6,6 +6,20 @@ Codeeingabe. Im Kamera-Menü Heim oder Gast aus DartRectify wählen. Die letzte
 Quellenauswahl wird gespeichert; eine verfügbare App ersetzt niemals eine
 gewählte Webcam. Ohne bisherige Auswahl bleiben beide Bereiche leer.
 
+Bei „Browserfreigabe erforderlich“ oben auf **DartRectify verbinden** klicken
+und die Browserabfrage bestätigen. Die erste Anfrage wartet bis zu einer Minute
+auf diese Entscheidung. „Vom Browser blockiert“ bedeutet, dass der Zugriff
+verweigert wurde: links neben der Adresse die Website-Einstellungen öffnen und
+den Zugriff auf lokale Apps bzw. das lokale Netzwerk erlauben. Eine Änderung der
+Berechtigung startet die Verbindung automatisch neu. Ein laufender lokaler
+Server allein kann diese Browserberechtigung nicht ersetzen.
+
+Beim Website-Update übernimmt der neue Service Worker auch bereits geöffnete
+Tabs. Dadurch kann ein alter Worker die lokale Anfrage nicht dauerhaft
+abfangen und die Chrome-Freigabe verhindern. Nach der Übernahme beginnt die
+Erkennung erneut. Bei bereits verweigerter Browserberechtigung bleibt die
+Freigabe in den Website-Einstellungen erforderlich.
+
 Die Bilder werden lokal über Port 8731 gelesen und nicht zum Webserver
 hochgeladen. Zoom, Position, Maske und Bildfilter werden je Quelle gespeichert;
 Perspektive und automatische Entzerrung werden in der Desktop-App eingestellt.

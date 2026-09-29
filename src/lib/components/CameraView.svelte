@@ -2,7 +2,7 @@
     import { createEventDispatcher, onDestroy } from "svelte";
     import { sourceKey, sourceFromKey, rectifiedSettings, type CameraSource } from '../cameraSources';
     import { DartRectifyClient, type ServerStatus } from '../dartrectify/client.js';
-    import { initialConnection, type BridgeConnection } from '../dartrectify/connection';
+    import { initialConnection, connectionLabels, connectionHelp, type BridgeConnection } from '../dartrectify/connection';
     import LiveScoreboard from "./LiveScoreboard.svelte";
     import CameraEditor from "./CameraEditor.svelte";
     import BoardCelebration from "./BoardCelebration.svelte";
@@ -81,8 +81,9 @@
             if (request === streamRequest) { ready = false; streamError = 'Webcam nicht verfügbar. Berechtigung prüfen oder die Kamera in DartRectify freigeben.'; }
         }
     }
-    function syncSource(source: CameraSource, video: HTMLVideoElement | undefined, image: HTMLImageElement | undefined, token: string) {
-        const key = sourceKey(source) + (source.kind === 'dartrectify' ? `:${token}` : '');
+    function syncSource(source: CameraSource, video: HTMLVideoElement | undefined, image: HTMLImageElement | undefined, connection: BridgeConnection) {
+        const { token } = connection;
+        const key = sourceKey(source) + (source.kind === 'dartrectify' ? `:${connection.status}:${token}` : '');
         const element = source.kind === 'webcam' ? video : source.kind === 'dartrectify' ? image : undefined;
         if (key === bindingKey && element === boundElement) return;
         stopStream(); bindingKey = key; boundElement = element; streamError = '';
@@ -90,7 +91,7 @@
         if (source.kind === 'none') return;
         if (source.kind === 'webcam' && video) { void startWebcam(source.deviceId, video, request); return; }
         if (source.kind !== 'dartrectify') return;
-        if (!token) { streamError = 'DartRectify ist nicht verbunden. App auf diesem PC starten und lokalen Browserzugriff erlauben.'; return; }
+        if (!token) { streamError = connectionHelp[connection.status]; return; }
         if (!image) return;
         const board = source.board;
         bridgeClient = new DartRectifyClient({ token, [board]: image,
@@ -106,7 +107,7 @@
         });
         bridgeClient.start();
     }
-    $: syncSource(selectedSource, videoElement, imageElement, bridge.token);
+    $: syncSource(selectedSource, videoElement, imageElement, bridge);
 
     function handleScoreDragStart(e: MouseEvent | TouchEvent) {
         dispatch("scoreDragStart", { originalEvent: e });
@@ -201,8 +202,8 @@
                 disabled={editLocked}>
                 <option value="">Keine Kamera</option>
                 <optgroup label="DartRectify · entzerrte Bilder">
-                    <option value="dartrectify:home">DartRectify – Heim{bridge.status === 'online' ? '' : ' (App offline)'}</option>
-                    <option value="dartrectify:guest">DartRectify – Gast{bridge.status === 'online' ? '' : ' (App offline)'}</option>
+                    <option value="dartrectify:home">DartRectify – Heim{bridge.status === 'online' ? '' : ` (${connectionLabels[bridge.status]})`}</option>
+                    <option value="dartrectify:guest">DartRectify – Gast{bridge.status === 'online' ? '' : ` (${connectionLabels[bridge.status]})`}</option>
                 </optgroup>
                 {#if selectedSource.kind === 'webcam' && !videoDevices.some(device => device.deviceId === (selectedSource.kind === 'webcam' ? selectedSource.deviceId : ''))}<option value={selectedDeviceId}>Gespeicherte Webcam (derzeit nicht gefunden)</option>{/if}
                 {#each videoDevices as device}

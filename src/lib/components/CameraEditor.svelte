@@ -8,7 +8,9 @@
     export let draft: CamSetting;
     export let frameWidth: number;
     export let frameHeight: number;
-    export let video: HTMLVideoElement | undefined;
+    export let media: HTMLVideoElement | HTMLImageElement | undefined;
+    export let rectified = false;
+    $: video = media instanceof HTMLVideoElement ? media : undefined;
 
     const dispatch = createEventDispatcher<{ apply: CamSetting; cancel: void }>();
     type NumberField = 'scaleX' | 'scaleY' | 'perspective' | 'rotateX' | 'rotateY' |
@@ -301,7 +303,7 @@
             <button class:active={mode === 'mask'} aria-pressed={mode === 'mask'}
                 on:click={() => selectMode('mask')} disabled={calibrating}>Maske</button>
         </div>
-        <div class="auto-tools">
+        {#if !rectified}<div class="auto-tools">
             <button class="auto-button" on:click={autoAlign} disabled={calibrating || !video}
                 aria-label="Dartboard automatisch ausrichten" title="Dartboard automatisch ausrichten">
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
@@ -319,6 +321,7 @@
                 {/if}
             </button>
         </div>
+        {/if}
         <div class="utility-tools">
             <button on:click={undo} disabled={(!history.length && !wheelBefore) || calibrating}
                 title="Letzten Schritt rückgängig machen" aria-label="Letzten Schritt rückgängig machen">↶</button>
@@ -333,7 +336,7 @@
     {#if showExtras}
         <div class="extras"
             style="top: {extrasTop}px; max-height: max(0px, calc(100% - {extrasTop + extrasBottom}px));">
-            <section class="extras-section" aria-label="Perspektive und Verzerrung">
+            {#if !rectified}<section class="extras-section" aria-label="Perspektive und Verzerrung">
                 <h3>Perspektive &amp; Verzerrung</h3>
                 <label>Breite: {draft.scaleX.toFixed(2)}
                     <input type="range" min="0.5" max="3" step="0.01" value={draft.scaleX}
@@ -363,6 +366,7 @@
                     Manuelle Korrektur zurücksetzen
                 </button>
             </section>
+            {/if}
             <section class="extras-section" aria-label="Bildfilter">
                 <h3>Bildfilter</h3>
                 <label>Helligkeit: {draft.brightness}%

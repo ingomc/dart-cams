@@ -1,5 +1,8 @@
 <script lang="ts">
     import { createEventDispatcher, onDestroy } from "svelte";
+    import { sourceKey, sourceFromKey, rectifiedSettings, type CameraSource } from '../cameraSources';
+    import { DartRectifyClient, type ServerStatus } from '../dartrectify/client.js';
+    import { initialConnection, type BridgeConnection } from '../dartrectify/connection';
     import LiveScoreboard from "./LiveScoreboard.svelte";
     import CameraEditor from "./CameraEditor.svelte";
     import BoardCelebration from "./BoardCelebration.svelte";
@@ -17,7 +20,8 @@
     export let camId: string;
     export let width: number; // percentage
     export let settings: CamSetting;
-    export let selectedDeviceId: string;
+    export let selectedSource: CameraSource = { kind: 'none' };
+    export let bridge: BridgeConnection = initialConnection;
     export let label: string;
     export let matches: MatchData["match"][];
     export let videoDevices: MediaDeviceInfo[] = [];
@@ -46,59 +50,63 @@
     let streamRequest = 0;
     let draft: CamSetting | null = null;
     let editingDeviceId = '';
-    $: displayedSettings = draft ?? settings;
+    let imageElement: HTMLImageElement | undefined;
+    let bridgeClient: DartRectifyClient | null = null;
+    let bindingKey = '';
+    let boundElement: HTMLVideoElement | HTMLImageElement | undefined;
+    let boardFresh = false;
+    $: selectedDeviceId = sourceKey(selectedSource);
+    $: rectified = selectedSource.kind === 'dartrectify';
+    $: displayedSettings = rectified ? rectifiedSettings(draft ?? settings) : draft ?? settings;
     $: selectedMatch = boardKey ? matchForBoard(matches, boardKey) : null;
     $: visibleCelebration = !draft && celebration?.board === boardKey && selectedMatch &&
         celebration.matchKey === selectedMatch.matchKey ? celebration : null;
     $: if (draft && editingDeviceId && selectedDeviceId !== editingDeviceId) cancelEdit();
 
-    onDestroy(() => {
-        streamRequest++;
-        activeStream?.getTracks().forEach((track) => track.stop());
-    });
-
-    // Stream logic
-    async function startStream(deviceId: string, el: HTMLVideoElement) {
-        const request = ++streamRequest;
-        if (!deviceId || !el) return;
-        ready = false;
-        streamError = "";
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                    deviceId: { exact: deviceId },
-                    width: 1280,
-                    height: 720,
-                },
-            });
-            if (request !== streamRequest) {
-                stream.getTracks().forEach((track) => track.stop());
-                return;
-            }
-            activeStream?.getTracks().forEach((track) => track.stop());
-            activeStream = stream;
-            el.srcObject = stream;
-        } catch (err) {
-            console.error("Fehler beim Starten des Streams:", err);
-            if (request === streamRequest) {
-                ready = false;
-                streamError = "Kamerastream nicht verfügbar. Gerät oder Berechtigung prüfen.";
-            }
-        }
-    }
-
     function stopStream() {
         streamRequest++;
-        activeStream?.getTracks().forEach((track) => track.stop());
-        activeStream = null;
+        bridgeClient?.destroy(); bridgeClient = null;
+        activeStream?.getTracks().forEach(track => track.stop()); activeStream = null;
         if (videoElement) videoElement.srcObject = null;
-        ready = false;
+        ready = false; boardFresh = false;
     }
+    onDestroy(stopStream);
 
-    $: if (selectedDeviceId && videoElement) {
-        startStream(selectedDeviceId, videoElement);
+    async function startWebcam(deviceId: string, el: HTMLVideoElement, request: number) {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId }, width: 1280, height: 720 } });
+            if (request !== streamRequest) { stream.getTracks().forEach(track => track.stop()); return; }
+            activeStream = stream; el.srcObject = stream;
+        } catch {
+            if (request === streamRequest) { ready = false; streamError = 'Webcam nicht verfügbar. Berechtigung prüfen oder die Kamera in DartRectify freigeben.'; }
+        }
     }
-    $: if (!selectedDeviceId && videoElement) stopStream();
+    function syncSource(source: CameraSource, video: HTMLVideoElement | undefined, image: HTMLImageElement | undefined, token: string) {
+        const key = sourceKey(source) + (source.kind === 'dartrectify' ? `:${token}` : '');
+        const element = source.kind === 'webcam' ? video : source.kind === 'dartrectify' ? image : undefined;
+        if (key === bindingKey && element === boundElement) return;
+        stopStream(); bindingKey = key; boundElement = element; streamError = '';
+        const request = streamRequest;
+        if (source.kind === 'none') return;
+        if (source.kind === 'webcam' && video) { void startWebcam(source.deviceId, video, request); return; }
+        if (source.kind !== 'dartrectify') return;
+        if (!token) { streamError = 'DartRectify ist nicht verbunden. App auf diesem PC starten und lokalen Browserzugriff erlauben.'; return; }
+        if (!image) return;
+        const board = source.board;
+        bridgeClient = new DartRectifyClient({ token, [board]: image,
+            onStatus: (status: ServerStatus) => {
+                if (request !== streamRequest) return;
+                const current = status.boards.find(item => item.id === board);
+                boardFresh = current?.ready === true;
+                ready = boardFresh && !image.hidden && image.naturalWidth > 0;
+                const messages: Record<string, string> = { camera_missing: 'In DartRectify eine Kamera auswählen.', stale: 'Kein aktuelles Kamerabild. Kameraanschluss prüfen.', uncalibrated: 'Dartscheibe in DartRectify kalibrieren.', orientation_required: 'Die 20 in DartRectify ausrichten.', calibrating: 'Kalibrierung läuft in DartRectify.', encoder_error: 'Das Kamerabild konnte nicht übertragen werden.' };
+                streamError = boardFresh ? '' : messages[current?.status ?? ''] ?? 'Warte auf ein aktuelles DartRectify-Bild.';
+            },
+            onError: () => { if (request === streamRequest) { ready = false; boardFresh = false; streamError = 'Verbindung zu DartRectify unterbrochen. Die Wiederverbindung erfolgt automatisch.'; } }
+        });
+        bridgeClient.start();
+    }
+    $: syncSource(selectedSource, videoElement, imageElement, bridge.token);
 
     function handleScoreDragStart(e: MouseEvent | TouchEvent) {
         dispatch("scoreDragStart", { originalEvent: e });
@@ -109,7 +117,7 @@
     }
 
     export function openEditor() {
-        if (editLocked || draft || !ready || !selectedDeviceId || !videoElement || !viewportWidth || !viewportHeight) return;
+        if (editLocked || draft || !ready || !selectedDeviceId || !(rectified ? imageElement : videoElement) || !viewportWidth || !viewportHeight) return;
         editingDeviceId = selectedDeviceId;
         draft = editDraft(settings, viewportWidth, viewportHeight);
         dispatch('editStart');
@@ -189,11 +197,16 @@
         </div>
         <div class="config-fields">
             <label class="ui-label" for="cam-select-{camId}">Kameraquelle</label>
-            <select class="ui-field" id="cam-select-{camId}" bind:value={selectedDeviceId}
+            <select class="ui-field" id="cam-select-{camId}" value={selectedDeviceId} on:change={(e) => selectedSource = sourceFromKey(e.currentTarget.value)}
                 disabled={editLocked}>
                 <option value="">Keine Kamera</option>
+                <optgroup label="DartRectify · entzerrte Bilder">
+                    <option value="dartrectify:home">DartRectify – Heim{bridge.status === 'online' ? '' : ' (App offline)'}</option>
+                    <option value="dartrectify:guest">DartRectify – Gast{bridge.status === 'online' ? '' : ' (App offline)'}</option>
+                </optgroup>
+                {#if selectedSource.kind === 'webcam' && !videoDevices.some(device => device.deviceId === (selectedSource.kind === 'webcam' ? selectedSource.deviceId : ''))}<option value={selectedDeviceId}>Gespeicherte Webcam (derzeit nicht gefunden)</option>{/if}
                 {#each videoDevices as device}
-                    <option value={device.deviceId}>{device.label || 'Kamera'} ({device.deviceId.slice(0, 8)}…)</option>
+                    <option value={'webcam:' + device.deviceId}>{device.label || 'Kamera'} ({device.deviceId.slice(0, 8)}…)</option>
                 {/each}
             </select>
             <button type="button" class="refresh-cameras" disabled={checkingCameras}
@@ -229,6 +242,12 @@
         {:else if !draft && !ready}
             <p class="connecting" role="status">Kamera wird verbunden…</p>
         {/if}
+        {#if rectified}
+            <img class="rectified" hidden bind:this={imageElement} alt="Entzerrte Dartscheibe {label}" crossorigin="anonymous" referrerpolicy="no-referrer"
+                on:load={() => { videoWidth = imageElement?.naturalWidth ?? 0; videoHeight = imageElement?.naturalHeight ?? 0; ready = boardFresh; }}
+                on:error={() => ready = false}
+                style={getTransformStyle(displayedSettings, camId, { width: viewportWidth, height: viewportHeight, videoWidth, videoHeight })} />
+        {:else}
         <!-- svelte-ignore a11y-media-has-caption -->
         <video
             bind:this={videoElement}
@@ -239,9 +258,10 @@
             on:resize={() => { videoWidth = videoElement?.videoWidth ?? 0; videoHeight = videoElement?.videoHeight ?? 0; }}
             style={getTransformStyle(displayedSettings, camId, { width: viewportWidth, height: viewportHeight, videoWidth, videoHeight })}
         ></video>
+        {/if}
     </div>
     {#if draft}
-        <CameraEditor bind:draft frameWidth={viewportWidth} frameHeight={viewportHeight} video={videoElement}
+        <CameraEditor bind:draft frameWidth={viewportWidth} frameHeight={viewportHeight} media={rectified ? imageElement : videoElement} {rectified}
             on:apply={applyEdit} on:cancel={cancelEdit} />
     {/if}
     {#if !draft}<div class="cam-label {camId === 'cam1' ? 'left' : 'right'}">{label}</div>{/if}
@@ -386,7 +406,8 @@
         overflow: hidden;
     }
 
-    video {
+    .rectified[hidden] { display: none; }
+    video, .rectified {
         width: 100%;
         height: 100%;
         object-fit: contain;

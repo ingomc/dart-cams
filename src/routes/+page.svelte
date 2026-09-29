@@ -1,5 +1,11 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from "svelte";
+	import { sourceKey, restoreSources, rectifiedSettings, type CameraSource } from '$lib/cameraSources';
+	import { DartRectifyDiscovery, initialConnection, type BridgeConnection } from '$lib/dartrectify/connection';
+	let bridge: BridgeConnection = initialConnection;
+	let discovery: DartRectifyDiscovery;
+	let sourcesRestored = false;
+	const loadingTimers: Partial<Record<'cam1' | 'cam2', ReturnType<typeof setTimeout>>> = {};
 	import CameraView from "$lib/components/CameraView.svelte";
 	import IframeSection from "$lib/components/IframeSection.svelte";
 	import { defaultCamSettings } from "$lib/constants";
@@ -12,8 +18,8 @@
 	let videoDevices: MediaDeviceInfo[] = [];
 	let cameraError = "";
 	let checkingCameras = false;
-	let selectedCam1 = "";
-	let selectedCam2 = "";
+	let selectedCam1: CameraSource = { kind: 'none' };
+	let selectedCam2: CameraSource = { kind: 'none' };
 	let cam1Label = "Heim";
 	let cam2Label = "Gast";
 	let showFloatingWebcam = false;
@@ -254,8 +260,11 @@
 			}
 		}
 
+		const sources = restoreSources(localStorage.getItem('dartCamSources'), localStorage.getItem('dartCamSelections'));
+		selectedCam1 = sources.cam1; selectedCam2 = sources.cam2; sourcesRestored = true;
+		discovery = new DartRectifyDiscovery((connection) => bridge = connection); discovery.start();
 		getDevices();
-		navigator.mediaDevices?.addEventListener("devicechange", getDevices);
+		navigator.mediaDevices?.addEventListener("devicechange", refreshKnownDevices);
 
 		window.addEventListener("mousemove", handleMove);
 		window.addEventListener("mouseup", handleEnd);
@@ -272,8 +281,10 @@
 
 	onDestroy(() => {
 		scoringClient?.stop();
+		Object.values(loadingTimers).forEach(clearTimeout);
+		discovery?.stop();
 		if (typeof window !== "undefined") {
-			navigator.mediaDevices?.removeEventListener("devicechange", getDevices);
+			navigator.mediaDevices?.removeEventListener("devicechange", refreshKnownDevices);
 			window.removeEventListener("mousemove", handleMove);
 			window.removeEventListener("mouseup", handleEnd);
 			window.removeEventListener("touchmove", handleMove);
@@ -286,60 +297,23 @@
 		}
 	});
 
-	async function getDevices() {
+	function refreshKnownDevices() { void getDevices(); }
+	async function getDevices(requestPermission = false) {
 		if (checkingCameras) return;
-		checkingCameras = true;
-		cameraError = "";
+		checkingCameras = true; cameraError = '';
 		let permissionStream: MediaStream | null = null;
 		try {
+			if (!navigator.mediaDevices) throw new Error('Kamera-API nicht verfügbar');
 			let devices = await navigator.mediaDevices.enumerateDevices();
-			if (!devices.some((device) => device.kind === "videoinput" && device.label)) {
+			if (requestPermission && !devices.some(d => d.kind === 'videoinput' && d.label)) {
 				permissionStream = await navigator.mediaDevices.getUserMedia({ video: true });
 				devices = await navigator.mediaDevices.enumerateDevices();
 			}
-			videoDevices = devices.filter(
-				(device) => device.kind === "videoinput",
-			);
-			if (!videoDevices.length) cameraError = "Keine Kamera gefunden. Anschluss und Browserberechtigung prüfen.";
-
-			const savedSelections = localStorage.getItem("dartCamSelections");
-			let savedCam1 = "";
-			let savedCam2 = "";
-
-			if (savedSelections) {
-				try {
-					const selections = JSON.parse(savedSelections);
-					savedCam1 = selections.cam1;
-					savedCam2 = selections.cam2;
-				} catch (e) {
-					console.error("Failed to parse saved camera selections", e);
-				}
-			}
-
-			if (
-				savedCam1 &&
-				videoDevices.some((d) => d.deviceId === savedCam1)
-			) {
-				selectedCam1 = savedCam1;
-			} else if (!videoDevices.some((d) => d.deviceId === selectedCam1)) {
-				selectedCam1 = videoDevices[0]?.deviceId ?? "";
-			}
-
-			if (
-				savedCam2 &&
-				videoDevices.some((d) => d.deviceId === savedCam2)
-			) {
-				selectedCam2 = savedCam2;
-			} else if (!videoDevices.some((d) => d.deviceId === selectedCam2)) {
-				selectedCam2 = videoDevices[1]?.deviceId ?? "";
-			}
-		} catch (err) {
-			console.error("Fehler beim Zugriff auf Kameras:", err);
-			cameraError = "Kamerazugriff nicht möglich. Bitte Browserberechtigung prüfen und erneut versuchen.";
-		} finally {
-			permissionStream?.getTracks().forEach((track) => track.stop());
-			checkingCameras = false;
-		}
+			videoDevices = devices.filter(d => d.kind === 'videoinput');
+			if (requestPermission && !videoDevices.length) cameraError = 'Keine Webcam gefunden. Anschluss und Browserberechtigung prüfen.';
+		} catch {
+			if (requestPermission) cameraError = 'Webcam-Zugriff nicht möglich. Berechtigung prüfen oder das Gerät in DartRectify freigeben.';
+		} finally { permissionStream?.getTracks().forEach(track => track.stop()); checkingCameras = false; }
 	}
 
 	function startVerticalDrag(e?: MouseEvent | TouchEvent) {
@@ -386,13 +360,15 @@
 
 	function loadSettings(slot: "cam1" | "cam2", deviceId: string) {
 		if (!deviceId) return;
+		clearTimeout(loadingTimers[slot]);
 		isLoadingSettings[slot] = true;
 
-		if (savedSettings[deviceId]) {
+		const stored = savedSettings[deviceId] ?? (deviceId.startsWith('webcam:') ? savedSettings[deviceId.slice(7)] : undefined);
+		if (stored) {
 			console.log(`Loading settings for ${slot} (${deviceId})`);
 			camSettings[slot] = {
 				...defaultCamSettings,
-				...savedSettings[deviceId],
+				...stored,
 			};
 		} else {
 			console.log(
@@ -401,7 +377,8 @@
 			camSettings[slot] = { ...defaultCamSettings };
 		}
 
-		setTimeout(() => {
+		if (deviceId.startsWith('dartrectify:')) camSettings[slot] = rectifiedSettings(camSettings[slot]);
+		loadingTimers[slot] = setTimeout(() => {
 			isLoadingSettings[slot] = false;
 		}, 100);
 	}
@@ -416,20 +393,13 @@
 		localStorage.setItem("dartCamSettings", JSON.stringify(savedSettings));
 	}
 
-	$: if (selectedCam1) {
-		loadSettings("cam1", selectedCam1);
-	}
-	$: if (selectedCam2) {
-		loadSettings("cam2", selectedCam2);
-	}
-
-	$: if (selectedCam1 && camSettings.cam1)
-		saveSettings("cam1", selectedCam1, camSettings.cam1);
-	$: if (selectedCam2 && camSettings.cam2)
-		saveSettings("cam2", selectedCam2, camSettings.cam2);
+	$: if (sourcesRestored && sourceKey(selectedCam1)) loadSettings('cam1', sourceKey(selectedCam1));
+	$: if (sourcesRestored && sourceKey(selectedCam2)) loadSettings('cam2', sourceKey(selectedCam2));
+	$: if (sourcesRestored && sourceKey(selectedCam1) && camSettings.cam1) saveSettings('cam1', sourceKey(selectedCam1), camSettings.cam1);
+	$: if (sourcesRestored && sourceKey(selectedCam2) && camSettings.cam2) saveSettings('cam2', sourceKey(selectedCam2), camSettings.cam2);
 
 	$: {
-		if (typeof localStorage !== "undefined") {
+		if (sourcesRestored && typeof localStorage !== "undefined") {
 			localStorage.setItem(
 				"dartCamLabels",
 				JSON.stringify({ cam1: cam1Label, cam2: cam2Label }),
@@ -440,11 +410,11 @@
 	$: {
 		if (
 			typeof localStorage !== "undefined" &&
-			(selectedCam1 || selectedCam2)
+			sourcesRestored
 		) {
 			localStorage.setItem(
-				"dartCamSelections",
-				JSON.stringify({ cam1: selectedCam1, cam2: selectedCam2 }),
+				"dartCamSources",
+				JSON.stringify({ version: 1, cam1: selectedCam1, cam2: selectedCam2 }),
 			);
 		}
 	}
@@ -459,6 +429,7 @@
             <span class="app-subtitle">Live-Kameraansicht</span>
         </div>
         <div class="top-actions">
+            <span class="ui-badge" class:ui-badge--success={bridge.status === 'online'} title="Lokale Bildquelle auf diesem PC">DartRectify {bridge.status === 'online' ? 'verbunden' : bridge.status === 'searching' ? 'wird gesucht' : 'offline'}</span>
             <span class="ui-badge {scoringStatus === 'live' ? 'ui-badge--success' : scoringStatus === 'error' ? 'ui-badge--error' : scoringStatus === 'connecting' || scoringStatus === 'offline' ? 'ui-badge--warning' : ''}"
                 aria-live="polite">
                 {scoringStatusText[scoringStatus]}{scoringUrl && matches.length ? ' · ' + matches.length + (matches.length === 1 ? ' Match' : ' Matches') : ''}
@@ -482,7 +453,7 @@
         <div class="camera-notice" role="alert">
             <span>{cameraError}</span>
             <button type="button" class="ui-button ui-button--secondary ui-button--small"
-                on:click={getDevices} disabled={checkingCameras}>Erneut versuchen</button>
+                on:click={() => getDevices(true)} disabled={checkingCameras}>Erneut versuchen</button>
         </div>
     {/if}
 
@@ -495,7 +466,8 @@
                     width={leftWidth}
                     bind:settings={camSettings.cam1}
                     editLocked={editingCam !== null}
-                    bind:selectedDeviceId={selectedCam1}
+                    {bridge}
+                    bind:selectedSource={selectedCam1}
                     bind:label={cam1Label}
                     bind:containerElement={container1}
                     bind:boardKey={cam1BoardKey}
@@ -510,7 +482,7 @@
                     {matches}
                     on:configure={() => toggleCameraSettings('cam1')}
                     on:boardChange={(event) => updateBoard('cam1', event.detail.board)}
-                    on:refreshDevices={getDevices}
+                    on:refreshDevices={() => getDevices(true)}
                     on:editRequest={() => beginCameraEdit('cam1')}
                     on:editStart={() => (editingCam = "cam1")}
                     on:editEnd={finishCameraEdit}
@@ -534,7 +506,8 @@
                     width={100 - leftWidth}
                     bind:settings={camSettings.cam2}
                     editLocked={editingCam !== null}
-                    bind:selectedDeviceId={selectedCam2}
+                    {bridge}
+                    bind:selectedSource={selectedCam2}
                     bind:label={cam2Label}
                     bind:containerElement={container2}
                     bind:boardKey={cam2BoardKey}
@@ -549,7 +522,7 @@
                     {matches}
                     on:configure={() => toggleCameraSettings('cam2')}
                     on:boardChange={(event) => updateBoard('cam2', event.detail.board)}
-                    on:refreshDevices={getDevices}
+                    on:refreshDevices={() => getDevices(true)}
                     on:editRequest={() => beginCameraEdit('cam2')}
                     on:editStart={() => (editingCam = "cam2")}
                     on:editEnd={finishCameraEdit}
@@ -601,6 +574,11 @@
                 on:click={closeSettings}>×</button>
         </div>
         <div class="drawer-body">
+            <section class="settings-section" aria-labelledby="dartrectify-title">
+                <h3 id="dartrectify-title">DartRectify</h3>
+                <p>{bridge.status === 'online' ? 'Die lokale App ist verbunden. Heim und Gast stehen in der Kameraauswahl bereit.' : 'Starte DartRectify auf diesem PC. Erlaube dieser Website gegebenenfalls den lokalen Netzwerkzugriff in den Browser-Einstellungen.'}</p>
+                <button class="ui-button ui-button--secondary" type="button" on:click={() => discovery?.retry()}>Verbindung erneut prüfen</button>
+            </section>
             <section class="settings-section" aria-labelledby="scoring-title">
                 <h3 id="scoring-title" class="ui-section-title">Live-Scoring</h3>
                 <form class="settings-form" on:submit|preventDefault={() => activateScoringUrl(scoringUrlDraft)}>

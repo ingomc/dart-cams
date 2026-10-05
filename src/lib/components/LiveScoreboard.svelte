@@ -90,7 +90,7 @@
 
     .player-row {
         display: grid;
-        grid-template-columns: minmax(0, 14ch) calc(54px * var(--score-scale)) calc(20px * var(--score-scale))
+        grid-template-columns: minmax(0, 12ch) calc(44px * var(--score-scale)) calc(20px * var(--score-scale))
             calc(28px * var(--score-scale)) calc(48px * var(--score-scale));
         align-items: center;
         gap: calc(6px * var(--score-scale));
@@ -126,6 +126,7 @@
     }
 
     .average {
+        margin-left: calc(-4px * var(--score-scale));
         color: var(--color-text-secondary);
         font-size: calc(11px * var(--score-scale));
     }

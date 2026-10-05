@@ -510,8 +510,8 @@
         top: 12px;
         right: 12px;
         display: flex;
-        /* Names use 14ch; the rest accounts for score columns, gaps and padding. */
-        width: min(calc(14ch + 195px * var(--score-scale)), calc(100% - 24px));
+        /* Names use 12ch; the rest accounts for score columns, gaps and padding. */
+        width: min(calc(12ch + 185px * var(--score-scale)), calc(100% - 24px));
         font-size: calc(12px * var(--score-scale));
     }
 

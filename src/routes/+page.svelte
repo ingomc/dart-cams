@@ -6,6 +6,8 @@
 	let discovery: DartRectifyDiscovery;
 	let sourcesRestored = false;
 	const loadingTimers: Partial<Record<'cam1' | 'cam2', ReturnType<typeof setTimeout>>> = {};
+	import SettingsSection from "$lib/components/SettingsSection.svelte";
+	let activeSettingsSection = "";
 	import CameraView from "$lib/components/CameraView.svelte";
 	import OverlaySizeControls from "$lib/components/OverlaySizeControls.svelte";
 	import IframeSection from "$lib/components/IframeSection.svelte";
@@ -680,21 +682,18 @@
                 on:click={closeSettings}>×</button>
         </div>
         <div class="drawer-body">
-            <details class="settings-section" name="app-settings">
-                <summary><h3>Einblendungen</h3></summary>
+            <SettingsSection id="settings-overlays" title="Einblendungen" icon="M4 7h16M4 17h16M8 4v6M16 14v6" bind:active={activeSettingsSection}>
                 <div class="settings-section-body">
                     <OverlaySizeControls bind:sizes={overlaySizes} />
                 </div>
-            </details>
-            <details class="settings-section" name="app-settings">
-                <summary><h3>DartRectify</h3></summary>
+            </SettingsSection>
+            <SettingsSection id="settings-rectify" title="DartRectify" icon="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" bind:active={activeSettingsSection}>
                 <div class="settings-section-body">
                     <button class="ui-button ui-button--secondary" type="button" on:click={() => discovery?.retry()}>Verbindung erneut prüfen</button>
                 <a class="ui-button ui-button--secondary" href="https://github.com/ingomc/DartRectify-Releases/releases/latest" target="_blank" rel="noopener noreferrer">DartRectify für Windows herunterladen ↗</a>
                 </div>
-            </details>
-            <details class="settings-section" name="app-settings">
-                <summary><h3>Live-Scoring</h3></summary>
+            </SettingsSection>
+            <SettingsSection id="settings-scoring" title="Live-Scoring" icon="M4 4h16v16H4zM8 8h2M8 12h2M8 16h2M14 8h2M14 12h2M14 16h2" bind:active={activeSettingsSection}>
                 <div class="settings-section-body">
                     <form class="settings-form" on:submit|preventDefault={() => activateScoringUrl(scoringUrlDraft)}>
                         <div>
@@ -730,7 +729,7 @@
                         </div>
                     {/if}
                 </div>
-            </details>
+            </SettingsSection>
             <button type="button" class="ui-button ui-button--secondary" aria-pressed={showFloatingWebcam}
                 on:click={() => (showFloatingWebcam = !showFloatingWebcam)}>
                 Webcam {showFloatingWebcam ? 'schließen' : 'öffnen'}
@@ -1131,62 +1130,6 @@
         overflow-y: auto;
         overscroll-behavior: contain;
         padding: var(--space-3);
-    }
-
-    .settings-section {
-        flex: none;
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-sm);
-        background: var(--color-background);
-    }
-
-    .settings-section summary {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: var(--space-2);
-        min-height: 44px;
-        padding: 10px 12px;
-        border-radius: var(--radius-sm);
-        cursor: pointer;
-        list-style: none;
-        user-select: none;
-    }
-
-    .settings-section summary::-webkit-details-marker {
-        display: none;
-    }
-
-    .settings-section summary::after {
-        content: '';
-        flex: none;
-        width: 7px;
-        height: 7px;
-        margin-right: 3px;
-        border-right: 2px solid var(--color-text-muted);
-        border-bottom: 2px solid var(--color-text-muted);
-        transform: rotate(45deg);
-    }
-
-    .settings-section summary:hover,
-    .settings-section[open] summary {
-        background: var(--color-surface-raised);
-    }
-
-    .settings-section[open] summary {
-        border-bottom: 1px solid var(--color-border);
-        border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    }
-
-    .settings-section[open] summary::after {
-        border-color: var(--color-brand-text);
-        transform: translateY(3px) rotate(225deg);
-    }
-
-    .settings-section h3 {
-        margin: 0;
-        color: var(--color-text);
-        font: 500 16px/1.3 var(--font-display);
     }
 
     .settings-section-body {

@@ -3,13 +3,24 @@
 
 	export let videoDevices: MediaDeviceInfo[] = [];
 	export let visible = false;
+	export let checkingCameras = false;
+	export let cameraError = '';
 
 	let videoElement: HTMLVideoElement;
 	let selectedDeviceId = "";
 	let stream: MediaStream | null = null;
+	let streamError = '';
+	let streamRequest = 0;
+	let boundVisible = false;
+	let boundDeviceId = '';
+	let boundElement: HTMLVideoElement | undefined;
 	let settingsOpen = false;
+	let mirrored = true;
 	let settingsButton: HTMLButtonElement;
-	const dispatch = createEventDispatcher<{ interaction: { active: boolean } }>();
+	const dispatch = createEventDispatcher<{
+		interaction: { active: boolean };
+		refreshDevices: { requestPermission: boolean };
+	}>();
 
 	// Position and Size
 	let x = 20;
@@ -66,23 +77,44 @@
 		settingsButton?.focus();
 	}
 
-	async function startStream() {
-		stopStream();
-		if (!selectedDeviceId) return;
-
+	async function startStream(deviceId: string, element: HTMLVideoElement, request: number) {
 		try {
-			stream = await navigator.mediaDevices.getUserMedia({
-				video: { deviceId: { exact: selectedDeviceId } },
+			const nextStream = await navigator.mediaDevices.getUserMedia({
+				video: { deviceId: { exact: deviceId } },
 			});
-			if (videoElement) {
-				videoElement.srcObject = stream;
+			if (request !== streamRequest) {
+				nextStream.getTracks().forEach(track => track.stop());
+				return;
 			}
+			stream = nextStream;
+			element.srcObject = nextStream;
+			dispatch('refreshDevices', { requestPermission: false });
 		} catch (err) {
-			console.error("Error starting webcam stream:", err);
+			if (request !== streamRequest) return;
+			const name = err instanceof Error ? err.name : '';
+			streamError = name === 'NotAllowedError'
+				? 'Kamerazugriff im Browser erlauben.'
+				: name === 'NotReadableError'
+					? 'Kamera nicht verfügbar. Prüfe, ob eine andere App sie belegt.'
+					: name === 'NotFoundError' || name === 'OverconstrainedError'
+						? 'Kamera nicht gefunden. Kameras neu suchen.'
+						: 'Webcam konnte nicht gestartet werden.';
+			settingsOpen = true;
 		}
 	}
 
+	function syncStream(show: boolean, deviceId: string, element: HTMLVideoElement | undefined) {
+		if (show === boundVisible && deviceId === boundDeviceId && element === boundElement) return;
+		boundVisible = show;
+		boundDeviceId = deviceId;
+		boundElement = element;
+		stopStream();
+		streamError = '';
+		if (show && deviceId && element) void startStream(deviceId, element, streamRequest);
+	}
+
 	function stopStream() {
+		streamRequest++;
 		if (stream) {
 			stream.getTracks().forEach((track) => track.stop());
 			stream = null;
@@ -193,16 +225,7 @@
 	$: if (!visible) resetControls();
 	$: dispatch('interaction', { active: visible && (settingsOpen || isDragging || isResizing) });
 
-	$: if (selectedDeviceId) {
-		startStream();
-	}
-
-	// Stop stream when hidden
-	$: if (!visible) {
-		stopStream();
-	} else if (visible && selectedDeviceId && !stream) {
-		startStream();
-	}
+	$: syncStream(visible, selectedDeviceId, videoElement);
 </script>
 
 {#if visible}
@@ -224,7 +247,7 @@
 	>
 		<div class="video-container">
 			<!-- svelte-ignore a11y-media-has-caption -->
-			<video bind:this={videoElement} autoplay playsinline muted></video>
+			<video bind:this={videoElement} class:mirrored autoplay playsinline muted></video>
 		</div>
 
 		<div class="webcam-actions">
@@ -250,12 +273,31 @@
 		{#if settingsOpen}
 			<div id="floating-webcam-settings" class="webcam-settings ui-panel">
 				<label class="ui-label" for="floating-webcam-device">Kameraquelle</label>
-				<select class="ui-field" id="floating-webcam-device" bind:value={selectedDeviceId}>
+				<select class="ui-field" id="floating-webcam-device" bind:value={selectedDeviceId} disabled={checkingCameras}>
 					<option value="">Kamera wählen…</option>
+					{#if selectedDeviceId && !videoDevices.some(device => device.deviceId === selectedDeviceId)}
+						<option value={selectedDeviceId}>Ausgewählte Kamera (derzeit nicht gefunden)</option>
+					{/if}
 					{#each videoDevices as device, index}
 						<option value={device.deviceId}>{device.label || `Kamera ${index + 1}`}</option>
 					{/each}
 				</select>
+				<div class="webcam-settings-actions">
+				<button type="button" class="ui-button ui-button--secondary ui-button--small"
+					disabled={checkingCameras}
+					on:click={() => dispatch('refreshDevices', { requestPermission: true })}>
+					{checkingCameras ? 'Aktualisiere Geräte…' : 'Geräte aktualisieren'}
+				</button>
+				<button type="button" class="ui-icon-button ui-button--secondary mirror-toggle"
+					aria-label="Bild spiegeln" title="Bild spiegeln" aria-pressed={mirrored}
+					on:click={() => mirrored = !mirrored}>
+					<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+					stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+					<path d="M12 3v18M3 6l6 3v6l-6 3V6Zm18 0-6 3v6l6 3V6Z" />
+					</svg>
+				</button>
+				</div>
+				{#if streamError || cameraError}<p class="webcam-error" role="alert">{streamError || cameraError}</p>{/if}
 			</div>
 		{/if}
 
@@ -342,8 +384,36 @@
     video {
         width: 100%;
         height: 100%;
-        transform: scaleX(-1);
         object-fit: cover;
+    }
+
+    video.mirrored {
+        transform: scaleX(-1);
+    }
+
+    .webcam-settings-actions {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 36px;
+        gap: var(--space-1);
+        align-items: stretch;
+    }
+
+    .webcam-settings-actions .ui-button {
+        min-height: 36px;
+        padding: 5px 8px;
+        font-size: 12px;
+    }
+
+    .mirror-toggle {
+        width: 36px;
+        min-height: 36px;
+        padding: 0;
+    }
+
+    .mirror-toggle[aria-pressed="true"] {
+        border-color: var(--color-brand-text);
+        background: var(--color-brand-active);
+        color: var(--color-text);
     }
 
     .webcam-settings {
@@ -385,6 +455,12 @@
         color: var(--color-text);
         cursor: se-resize;
         touch-action: none;
+    }
+
+    .webcam-error {
+        margin: 4px 0 0;
+        color: #ffb2ba;
+        font-size: 12px;
     }
 
     .resizer:hover {

@@ -8,6 +8,8 @@
     export let showFloatingWebcam: boolean;
     export let showIframe: boolean;
     export let videoDevices: MediaDeviceInfo[];
+    export let checkingCameras = false;
+    export let cameraError = '';
 </script>
 
 {#if showIframe}
@@ -33,7 +35,8 @@
     </section>
 {/if}
 
-<FloatingWebcam bind:visible={showFloatingWebcam} {videoDevices} on:interaction />
+<FloatingWebcam bind:visible={showFloatingWebcam} {videoDevices} {checkingCameras} {cameraError}
+    on:interaction on:refreshDevices />
 
 <style>
     .iframe-section {

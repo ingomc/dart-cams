@@ -482,7 +482,7 @@
 
 <svelte:window on:keydown={handleWindowKeydown} />
 
-<main class="app-shell" class:dragging={isDraggingVertical || isDraggingHorizontal}
+<main class="app-shell" class:controls-idle={!controlsVisible} class:dragging={isDraggingVertical || isDraggingHorizontal}
     style="--controls-opacity: {controlsVisible ? 1 : 0}; --controls-pointer-events: {controlsVisible ? 'auto' : 'none'};">
     {#if bridge.status === 'permission' || bridge.status === 'blocked'}
         <div class="camera-notice" role="status">{connectionHelp[bridge.status]}</div>
@@ -601,6 +601,8 @@
 
         <IframeSection {scoringUrl} {cropTop} {cropBottom} {iframeZoom}
             bind:showFloatingWebcam {showIframe} {videoDevices}
+            {checkingCameras} {cameraError}
+            on:refreshDevices={(event) => getDevices(event.detail.requestPermission)}
             on:interaction={(event) => webcamInteracting = event.detail.active}>
             <div slot="overlay">
                 {#if isDraggingVertical || isDraggingHorizontal}
@@ -667,7 +669,11 @@
         </div>
     </footer>
 
-    <aside id="settings-panel" class="settings-drawer" aria-labelledby="settings-title" hidden={!settingsOpen}>
+    <button type="button" class="settings-backdrop" class:open={settingsOpen}
+        aria-label="Einstellungen schließen" aria-hidden={!settingsOpen} inert={!settingsOpen}
+        tabindex="-1" on:click={closeSettings}></button>
+
+    <aside id="settings-panel" class="settings-drawer" class:open={settingsOpen} aria-labelledby="settings-title" aria-hidden={!settingsOpen} inert={!settingsOpen}>
         <div class="drawer-header">
             <h2 id="settings-title">Einstellungen</h2>
             <button type="button" class="ui-icon-button" aria-label="Einstellungen schließen"
@@ -706,22 +712,11 @@
                         <button type="submit" class="ui-button ui-button--primary">Verbinden</button>
                     </form>
                     {#if scoringError}<p class="field-error" role="alert">{scoringError}</p>{/if}
-                </div>
-            </details>
-
-            <details class="settings-section" name="app-settings">
-                <summary><h3>Ansicht</h3></summary>
-                <div class="settings-section-body">
-                    <div class="display-actions">
-                        <button type="button" class="ui-button ui-button--secondary" aria-pressed={showIframe}
-                            disabled={!scoringUrl} on:click={() => (showIframe = !showIframe)}>
-                            3K-Live-Ansicht {showIframe ? 'ausblenden' : 'einblenden'}
-                        </button>
-                        <button type="button" class="ui-button ui-button--secondary" aria-pressed={showFloatingWebcam}
-                            on:click={() => (showFloatingWebcam = !showFloatingWebcam)}>
-                            Webcam {showFloatingWebcam ? 'schließen' : 'öffnen'}
-                        </button>
-                    </div>
+                    <label class="settings-switch" class:disabled={!scoringUrl}>
+                        <span>3K-Live-Ansicht</span>
+                        <input type="checkbox" role="switch" bind:checked={showIframe} disabled={!scoringUrl} />
+                        <span class="switch-track" aria-hidden="true"></span>
+                    </label>
                     {#if showIframe}
                         <div class="iframe-settings ui-panel">
                             <label class="ui-label" for="crop-top">Oben abschneiden (px)</label>
@@ -735,6 +730,10 @@
                     {/if}
                 </div>
             </details>
+            <button type="button" class="ui-button ui-button--secondary" aria-pressed={showFloatingWebcam}
+                on:click={() => (showFloatingWebcam = !showFloatingWebcam)}>
+                Webcam {showFloatingWebcam ? 'schließen' : 'öffnen'}
+            </button>
         </div>
     </aside>
 </main>
@@ -742,6 +741,10 @@
 <style>
     .app-shell {
         --app-bar-height: 40px;
+        --camera-gap: 4px;
+        --camera-divider-width: 10px;
+        --live-divider-height: 10px;
+        --live-divider-margin: 4px;
         position: relative;
         display: flex;
         flex-direction: column;
@@ -750,6 +753,14 @@
         min-height: 560px;
         overflow: hidden;
         background: var(--color-background);
+    }
+
+    .app-shell.controls-idle:not(:has(:focus-visible)) {
+        --app-bar-height: 4px;
+        --camera-gap: 1px;
+        --camera-divider-width: 2px;
+        --live-divider-height: 2px;
+        --live-divider-margin: 1px;
     }
 
     .app-shell.dragging {
@@ -771,7 +782,8 @@
         background: var(--color-surface);
         opacity: var(--controls-opacity, 1);
         pointer-events: var(--controls-pointer-events, auto);
-        transition: opacity 200ms ease;
+        overflow: hidden;
+        transition: opacity 200ms ease, height 200ms ease;
     }
 
     .app-bar:has(:focus-visible) {
@@ -924,8 +936,9 @@
         position: relative;
         display: flex;
         flex: 1;
-        gap: var(--space-1);
+        gap: var(--camera-gap);
         min-height: 0;
+        transition: gap 200ms ease;
     }
 
     .team-score-strip {
@@ -985,7 +998,8 @@
         background: var(--color-surface);
         opacity: var(--controls-opacity, 1);
         pointer-events: var(--controls-pointer-events, auto);
-        transition: background 150ms ease, border-color 150ms ease, opacity 200ms ease;
+        transition: background 150ms ease, border-color 150ms ease, opacity 200ms ease,
+            width 200ms ease, height 200ms ease, margin 200ms ease;
         touch-action: none;
     }
 
@@ -996,7 +1010,7 @@
     }
 
     .resizer-horizontal {
-        width: 10px;
+        width: var(--camera-divider-width);
         cursor: col-resize;
     }
 
@@ -1008,9 +1022,9 @@
     }
 
     .resizer-vertical {
-        height: 10px;
-        margin-top: var(--space-1);
-        margin-bottom: var(--space-1);
+        height: var(--live-divider-height);
+        margin-top: var(--live-divider-margin);
+        margin-bottom: var(--live-divider-margin);
         cursor: row-resize;
     }
 
@@ -1036,6 +1050,26 @@
         background: transparent;
     }
 
+    .settings-backdrop {
+        position: absolute;
+        z-index: 499;
+        inset: 0;
+        padding: 0;
+        border: 0;
+        background: rgb(0 0 0 / 35%);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 220ms ease, visibility 0s linear 220ms;
+    }
+
+    .settings-backdrop.open {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+        transition-delay: 0s;
+    }
+
     .settings-drawer {
         position: absolute;
         z-index: 500;
@@ -1044,14 +1078,23 @@
         bottom: var(--app-bar-height);
         display: flex;
         flex-direction: column;
-        width: min(360px, 34vw);
+        width: min(440px, calc(100vw - 32px));
         border-left: 1px solid #66696c;
         background: var(--color-surface);
         box-shadow: var(--shadow-panel);
+        transform: translateX(100%);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: transform 220ms ease, opacity 180ms ease, visibility 0s linear 220ms;
     }
 
-    .settings-drawer[hidden] {
-        display: none;
+    .settings-drawer.open {
+        transform: translateX(0);
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+        transition-delay: 0s;
     }
 
     .drawer-header {
@@ -1152,15 +1195,70 @@
     }
 
     .settings-form,
-    .iframe-settings,
-    .display-actions {
+    .iframe-settings {
         display: grid;
         gap: var(--space-2);
     }
 
-    .settings-form .ui-button,
-    .display-actions .ui-button {
+    .settings-form .ui-button {
         width: 100%;
+    }
+
+    .settings-switch {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-2);
+        min-height: 36px;
+        cursor: pointer;
+    }
+
+    .settings-switch.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .settings-switch input {
+        position: absolute;
+        right: 0;
+        width: 44px;
+        height: 26px;
+        margin: 0;
+        opacity: 0;
+    }
+
+    .switch-track {
+        flex: none;
+        width: 44px;
+        height: 26px;
+        padding: 3px;
+        border: 1px solid var(--color-text-muted);
+        border-radius: 99px;
+        background: var(--color-background);
+    }
+
+    .switch-track::before {
+        content: '';
+        display: block;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--color-text);
+    }
+
+    .settings-switch input:checked + .switch-track {
+        border-color: var(--color-brand-text);
+        background: var(--color-brand);
+    }
+
+    .settings-switch input:checked + .switch-track::before {
+        transform: translateX(18px);
+    }
+
+    .settings-switch input:focus-visible + .switch-track {
+        outline: 2px solid var(--color-text);
+        outline-offset: 3px;
     }
 
     .event-link-field {
@@ -1203,7 +1301,10 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
+        .settings-backdrop,
+        .settings-drawer,
         .app-bar,
+        .camera-section,
         .camera-notice .ui-button,
         .resizer-horizontal,
         .resizer-vertical { transition: none; }

@@ -690,6 +690,7 @@
                 <summary><h3>DartRectify</h3></summary>
                 <div class="settings-section-body">
                     <button class="ui-button ui-button--secondary" type="button" on:click={() => discovery?.retry()}>Verbindung erneut prüfen</button>
+                <a class="ui-button ui-button--secondary" href="https://github.com/ingomc/DartRectify-Releases/releases/latest" target="_blank" rel="noopener noreferrer">DartRectify für Windows herunterladen ↗</a>
                 </div>
             </details>
             <details class="settings-section" name="app-settings">

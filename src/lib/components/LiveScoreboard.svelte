@@ -7,6 +7,34 @@
     export let data: MatchData;
     export let stale = false;
     export let scale = 100;
+
+    let previous: { identity: string; players: { points: unknown; darts: unknown; lastScore: unknown; legs: unknown; sets: unknown }[] } | null = null;
+    let visitVersions = [0, 0];
+
+    $: trackVisits(data);
+
+    function trackVisits(next: MatchData): void {
+        const identity = JSON.stringify([next.match.matchKey, next.match.board,
+            next.match.matchPlayers.map(player => player.playerName)]);
+        const players = next.match.matchPlayers.map(player => ({
+            points: player.points, darts: player.darts, lastScore: player.lastScore,
+            legs: player.legs, sets: player.sets
+        }));
+        if (previous?.identity === identity) {
+            visitVersions = players.map((player, index) => {
+                const before = previous?.players[index];
+                const sameLeg = before && player.legs === before.legs && player.sets === before.sets;
+                const newVisit = sameLeg && (
+                    Number(player.darts) > Number(before.darts) ||
+                    Number(player.points) < Number(before.points) || player.lastScore !== before.lastScore
+                );
+                return (visitVersions[index] ?? 0) + (newVisit ? 1 : 0);
+            });
+        } else {
+            visitVersions = [0, 0];
+        }
+        previous = { identity, players };
+    }
 </script>
 
 <div class="scoreboard" class:stale aria-label="Board {data.match.board ?? '–'}: Live-Scoring{stale ? ', letzter Stand' : ''}"
@@ -23,7 +51,10 @@
             </span>
             <span class="stat average" aria-label="3-Dart-Average {average}">Ø {average}</span>
             <span class="stat legs" aria-label="Gewonnene Legs {displayNumber(player?.legs)}">{displayNumber(player?.legs)}</span>
-            <span class="stat last-score" aria-label="Letzter Wurf {displayNumber(player?.lastScore)}">{displayNumber(player?.lastScore)}</span>
+            {#key `${data.match.matchKey ?? ''}/${data.match.board ?? ''}/${player?.playerName ?? ''}/${visitVersions[index]}`}
+                <span class="stat last-score" class:fresh={visitVersions[index] > 0}
+                    aria-label="Letzter Wurf {displayNumber(player?.lastScore)}">{displayNumber(player?.lastScore)}</span>
+            {/key}
             <span class="stat remaining" class:winner aria-label={winner ? `${player?.playerName || 'Unbekannt'}: Sieger` : `Restscore ${remaining}`}>
                 <strong>
                     {#if winner}
@@ -59,7 +90,7 @@
 
     .player-row {
         display: grid;
-        grid-template-columns: minmax(0, 20ch) calc(54px * var(--score-scale)) calc(20px * var(--score-scale))
+        grid-template-columns: minmax(0, 14ch) calc(54px * var(--score-scale)) calc(20px * var(--score-scale))
             calc(28px * var(--score-scale)) calc(48px * var(--score-scale));
         align-items: center;
         gap: calc(6px * var(--score-scale));
@@ -111,6 +142,19 @@
     .last-score {
         color: var(--color-text-muted);
         font: 500 calc(15px * var(--score-scale))/1 var(--font-display);
+    }
+
+    .last-score.fresh {
+        animation: fresh-visit 1800ms ease-out;
+    }
+
+    @keyframes fresh-visit {
+        0%, 20% { color: #ffffff; }
+        100% { color: var(--color-text-muted); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .last-score.fresh { animation-duration: 1ms; }
     }
 
     .remaining strong {

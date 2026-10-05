@@ -11,6 +11,7 @@
     import type { ScoringStatus } from "../liveScoring";
     import { matchForBoard } from "../scoring";
     import { editDraft } from "../manualEdit";
+    import { defaultOverlaySizes, type OverlaySizes } from "../overlaySizes";
     import {
         getTransformStyle,
         getMaskStyle,
@@ -19,10 +20,12 @@
 
     export let camId: string;
     export let width: number; // percentage
+    export let visible = true;
     export let settings: CamSetting;
     export let selectedSource: CameraSource = { kind: 'none' };
     export let bridge: BridgeConnection = initialConnection;
     export let label: string;
+    export let overlaySizes: OverlaySizes = { ...defaultOverlaySizes };
     export let matches: MatchData["match"][];
     export let videoDevices: MediaDeviceInfo[] = [];
     export let availableBoards: string[] = [];
@@ -43,6 +46,8 @@
 
     let viewportWidth = 0;
     let viewportHeight = 0;
+    let scoreOverlayWidth = 0;
+    let scoreOverlayHeight = 0;
     let videoWidth = 0;
     let videoHeight = 0;
     let streamError = "";
@@ -153,21 +158,24 @@
 
 <div
     class="cam-container"
-    style="width: {width}%;"
+    hidden={!visible}
+    style="width: {width}%; --camera-label-scale: {overlaySizes.label / 100}; --score-scale: {overlaySizes.score / 100};"
     bind:this={containerElement}
 >
     <!-- Scoreboard Overlay -->
-    {#if boardKey && !draft && !configOpen}
+    {#if boardKey && !draft}
         {#if selectedMatch}
             <!-- svelte-ignore a11y-no-static-element-interactions -->
             <div
                 class="ws-message-overlay draggable"
                 class:positioned={scorePos.x !== null}
-                style={scorePos.x === null ? '' : `left: ${scorePos.x}%; top: ${scorePos.y ?? 0}%;`}
+                style={scorePos.x === null ? '' : `left: clamp(${scoreOverlayWidth / 2}px, ${scorePos.x}%, calc(100% - ${scoreOverlayWidth / 2}px)); top: clamp(0px, ${scorePos.y ?? 0}%, calc(100% - ${scoreOverlayHeight}px));`}
+                bind:clientWidth={scoreOverlayWidth}
+                bind:clientHeight={scoreOverlayHeight}
                 on:mousedown={handleScoreDragStart}
                 on:touchstart={handleScoreDragStart}
             >
-                <LiveScoreboard data={{ match: selectedMatch }} stale={scoringStatus !== 'live'} />
+                <LiveScoreboard data={{ match: selectedMatch }} scale={overlaySizes.score} stale={scoringStatus !== 'live'} />
             </div>
         {:else}
             <div class="no-match" role="status">Board {boardKey}: {scoringStatus === 'connecting' ? 'Lade Match…' : 'Kein aktives Match'}</div>
@@ -281,6 +289,10 @@
         background: var(--color-video);
     }
 
+    .cam-container[hidden] {
+        display: none;
+    }
+
     .camera-heading {
         position: absolute;
         z-index: 160;
@@ -298,6 +310,25 @@
         font: 600 12px/1.2 var(--font-display);
         letter-spacing: 0.12em;
         text-transform: uppercase;
+        opacity: var(--controls-opacity, 1);
+        pointer-events: var(--controls-pointer-events, auto);
+        transition: opacity 200ms ease;
+    }
+
+    .camera-heading:has(:focus-visible) {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .empty-state .ui-button {
+        opacity: var(--controls-opacity, 1);
+        pointer-events: var(--controls-pointer-events, auto);
+        transition: opacity 200ms ease;
+    }
+
+    .empty-state .ui-button:focus-visible {
+        opacity: 1;
+        pointer-events: auto;
     }
 
     .camera-gear {
@@ -459,13 +490,13 @@
         position: absolute;
         z-index: 20;
         bottom: 12px;
-        max-width: min(45%, 220px);
+        max-width: min(24ch, calc(100% - 24px));
         overflow: hidden;
-        padding: 5px 12px 6px;
-        border-left: 3px solid var(--color-brand);
+        padding: calc(5px * var(--camera-label-scale)) calc(12px * var(--camera-label-scale)) calc(6px * var(--camera-label-scale));
+        border-left: calc(3px * var(--camera-label-scale)) solid var(--color-brand);
         border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
         background: rgba(21, 23, 25, 0.88);
-        font: 600 17px/1.2 var(--font-display);
+        font: 600 calc(17px * var(--camera-label-scale))/1.2 var(--font-display);
         text-overflow: ellipsis;
         white-space: nowrap;
     }
@@ -479,7 +510,9 @@
         top: 12px;
         right: 12px;
         display: flex;
-        width: min(340px, calc(100% - 24px));
+        /* Names use 20ch; the rest accounts for score columns, gaps and padding. */
+        width: min(calc(20ch + 195px * var(--score-scale)), calc(100% - 24px));
+        font-size: calc(12px * var(--score-scale));
     }
 
     .ws-message-overlay.positioned {
@@ -505,5 +538,10 @@
         background: rgba(21, 23, 25, 0.88);
         color: var(--color-text-secondary);
         font-size: 12px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .camera-heading,
+        .empty-state .ui-button { transition: none; }
     }
 </style>

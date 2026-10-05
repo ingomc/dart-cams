@@ -33,7 +33,7 @@
     </section>
 {/if}
 
-<FloatingWebcam bind:visible={showFloatingWebcam} {videoDevices} />
+<FloatingWebcam bind:visible={showFloatingWebcam} {videoDevices} on:interaction />
 
 <style>
     .iframe-section {

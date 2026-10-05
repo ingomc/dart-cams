@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from "svelte";
+	import { createEventDispatcher, onMount, onDestroy } from "svelte";
 
 	export let videoDevices: MediaDeviceInfo[] = [];
 	export let visible = false;
@@ -7,6 +7,9 @@
 	let videoElement: HTMLVideoElement;
 	let selectedDeviceId = "";
 	let stream: MediaStream | null = null;
+	let settingsOpen = false;
+	let settingsButton: HTMLButtonElement;
+	const dispatch = createEventDispatcher<{ interaction: { active: boolean } }>();
 
 	// Position and Size
 	let x = 20;
@@ -33,6 +36,7 @@
 		window.addEventListener("mouseup", handleEnd);
 		window.addEventListener("touchmove", handleMove, { passive: false });
 		window.addEventListener("touchend", handleEnd);
+		window.addEventListener("touchcancel", handleEnd);
 	});
 
 	onDestroy(() => {
@@ -40,8 +44,27 @@
 		window.removeEventListener("mouseup", handleEnd);
 		window.removeEventListener("touchmove", handleMove);
 		window.removeEventListener("touchend", handleEnd);
+		window.removeEventListener("touchcancel", handleEnd);
 		stopStream();
 	});
+
+	function resetControls() {
+		settingsOpen = false;
+		isDragging = false;
+		isResizing = false;
+	}
+
+	function toggleSettings() {
+		settingsOpen = !settingsOpen;
+	}
+
+	function handleKeydown(event: KeyboardEvent) {
+		if (event.key !== 'Escape' || !settingsOpen) return;
+		event.preventDefault();
+		event.stopPropagation();
+		settingsOpen = false;
+		settingsButton?.focus();
+	}
 
 	async function startStream() {
 		stopStream();
@@ -71,13 +94,14 @@
 
 	function handleClose() {
 		visible = false;
+		resetControls();
 		stopStream();
 	}
 
 	// Dragging Logic
 	function startDrag(e: MouseEvent | TouchEvent) {
 		const target = e.target as HTMLElement | null;
-		if (target?.closest(".controls") || target?.closest(".resizer") || target?.closest(".close-btn"))
+		if (target?.closest(".webcam-actions, .webcam-settings, .resizer") || ('button' in e && e.button !== 0))
 			return;
 		if (e.type === "touchstart") e.preventDefault();
 
@@ -98,6 +122,7 @@
 	// Resizing Logic
 	function startResize(e: MouseEvent | TouchEvent) {
 		e.stopPropagation();
+		if ('button' in e && e.button !== 0) return;
 		if (e.type === "touchstart") e.preventDefault();
 
 		isResizing = true;
@@ -155,6 +180,19 @@
 		isResizing = false;
 	}
 
+	function handleResizeKeydown(event: KeyboardEvent) {
+		if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+		event.preventDefault();
+		const step = event.shiftKey ? 1 : 10;
+		if (event.key === 'ArrowLeft') width = Math.max(160, width - step);
+		if (event.key === 'ArrowRight') width += step;
+		if (event.key === 'ArrowUp') height = Math.max(120, height - step);
+		if (event.key === 'ArrowDown') height += step;
+	}
+
+	$: if (!visible) resetControls();
+	$: dispatch('interaction', { active: visible && (settingsOpen || isDragging || isResizing) });
+
 	$: if (selectedDeviceId) {
 		startStream();
 	}
@@ -177,40 +215,62 @@
 	<!-- svelte-ignore a11y-no-static-element-interactions -->
 	<div
 		class="floating-window"
+		class:controls-visible={settingsOpen || isDragging || isResizing}
+		class:dragging={isDragging}
 		style="left: {x}px; top: {y}px; width: {width}px; height: {height}px;"
 		on:mousedown={startDrag}
 		on:touchstart={startDrag}
+		on:keydown={handleKeydown}
 	>
-		<div class="header">
-			<span class="drag-handle">Webcam</span>
-			<button class="close-btn" aria-label="Webcam schließen" on:click={handleClose}>&times;</button>
-		</div>
-
 		<div class="video-container">
 			<!-- svelte-ignore a11y-media-has-caption -->
 			<video bind:this={videoElement} autoplay playsinline muted></video>
 		</div>
 
-		<div class="controls">
-			<label for="floating-webcam-device">Kameraquelle</label>
-			<select class="ui-field" id="floating-webcam-device" bind:value={selectedDeviceId}>
-				<option value="">Kamera wählen...</option>
-				{#each videoDevices as device}
-					<option value={device.deviceId}
-						>{device.label || "Kamera"} ({device.deviceId.slice(
-							0,
-							8,
-						)}...)</option
-					>
-				{/each}
-			</select>
+		<div class="webcam-actions">
+			<button type="button" class="ui-icon-button webcam-action" bind:this={settingsButton}
+				aria-label="Webcam-Einstellungen {settingsOpen ? 'schließen' : 'öffnen'}"
+				title="Kamera auswählen" aria-controls="floating-webcam-settings" aria-expanded={settingsOpen}
+				on:click={toggleSettings}>
+				<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+					stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+					<path d="M10 2h4l.5 2.2 1.7.7 1.9-1.2 2.8 2.8-1.2 1.9.7 1.7L22 10v4l-2.2.5-.7 1.7 1.2 1.9-2.8 2.8-1.9-1.2-1.7.7L14 22h-4l-.5-2.2-1.7-.7-1.9 1.2-2.8-2.8 1.2-1.9-.7-1.7L2 14v-4l2.2-.5.7-1.7-1.2-1.9 2.8-2.8 1.9 1.2 1.7-.7L10 2Z" />
+					<circle cx="12" cy="12" r="3" />
+				</svg>
+			</button>
+			<button type="button" class="ui-icon-button webcam-action close-btn"
+				aria-label="Webcam schließen" title="Webcam schließen" on:click={handleClose}>
+				<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+					stroke-width="2" stroke-linecap="round" aria-hidden="true">
+					<path d="m6 6 12 12M18 6 6 18" />
+				</svg>
+			</button>
 		</div>
 
-		<div
+		{#if settingsOpen}
+			<div id="floating-webcam-settings" class="webcam-settings ui-panel">
+				<label class="ui-label" for="floating-webcam-device">Kameraquelle</label>
+				<select class="ui-field" id="floating-webcam-device" bind:value={selectedDeviceId}>
+					<option value="">Kamera wählen…</option>
+					{#each videoDevices as device, index}
+						<option value={device.deviceId}>{device.label || `Kamera ${index + 1}`}</option>
+					{/each}
+				</select>
+			</div>
+		{/if}
+
+		<button type="button"
 			class="resizer"
+			aria-label="Webcam-Größe ändern" title="Größe ändern"
 			on:mousedown={startResize}
 			on:touchstart={startResize}
-		></div>
+			on:keydown={handleResizeKeydown}
+		>
+			<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor"
+				stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+				<path d="m5 15 10-10m-4 10 4-4" />
+			</svg>
+		</button>
 	</div>
 {/if}
 
@@ -218,86 +278,92 @@
     .floating-window {
         position: fixed;
         z-index: 2000;
-        display: flex;
-        flex-direction: column;
         min-width: 160px;
         min-height: 120px;
         overflow: hidden;
-        border: 1px solid var(--color-border);
-        border-top: 3px solid var(--color-brand);
         border-radius: var(--radius-md);
-        background: var(--color-surface);
+        background: var(--color-video);
         box-shadow: var(--shadow-panel);
-    }
-
-    .header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: var(--space-2);
-        min-height: 42px;
-        padding: 2px var(--space-2) 2px var(--space-3);
-        border-bottom: 1px solid var(--color-border);
-        background: var(--color-surface-raised);
-        cursor: move;
+        cursor: grab;
+        touch-action: none;
         user-select: none;
     }
 
-    .drag-handle {
-        color: var(--color-text);
-        font: 600 15px/1 var(--font-display);
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
+    .floating-window.dragging {
+        cursor: grabbing;
     }
 
-    .close-btn {
-        width: 34px;
-        height: 34px;
+    .webcam-actions {
+        position: absolute;
+        z-index: 3;
+        top: var(--space-2);
+        right: var(--space-2);
+        display: flex;
+        gap: var(--space-1);
+    }
+
+    .webcam-actions,
+    .resizer {
+        opacity: var(--controls-opacity, 1);
+        pointer-events: var(--controls-pointer-events, auto);
+        transition: opacity 200ms ease;
+    }
+
+    .controls-visible .webcam-actions,
+    .controls-visible .resizer,
+    .floating-window:has(:focus-visible) .webcam-actions,
+    .floating-window:has(:focus-visible) .resizer {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .webcam-action {
+        width: 32px;
+        min-height: 32px;
         padding: 0;
-        border: 1px solid transparent;
-        border-radius: var(--radius-sm);
-        background: transparent;
-        color: var(--color-text-secondary);
-        font-size: 24px;
-        line-height: 1;
+        border-color: rgba(255, 255, 255, 0.3);
+        background: rgba(21, 23, 25, 0.92);
+        color: var(--color-text);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
     }
 
+    .webcam-action[aria-expanded="true"],
     .close-btn:hover {
-        border-color: var(--color-border);
+        border-color: var(--color-brand-text);
         background: var(--color-brand-active);
-        color: var(--color-text);
     }
 
     .video-container {
-        position: relative;
-        flex: 1;
+        position: absolute;
+        inset: 0;
         overflow: hidden;
-        background: var(--color-video);
     }
 
     video {
         width: 100%;
         height: 100%;
+        transform: scaleX(-1);
         object-fit: cover;
     }
 
-    .controls {
+    .webcam-settings {
+        position: absolute;
+        z-index: 4;
+        top: 48px;
+        right: var(--space-2);
         display: grid;
-        gap: 4px;
-        padding: var(--space-2);
-        border-top: 1px solid var(--color-border);
+        gap: var(--space-1);
+        width: min(280px, calc(100% - 16px));
+        max-height: calc(100% - 56px);
+        overflow-y: auto;
+        padding: 12px;
         background: var(--color-surface);
+        box-shadow: var(--shadow-panel);
+        cursor: default;
+        user-select: text;
     }
 
-    .controls label {
-        color: var(--color-text-secondary);
-        font-size: 10px;
-        font-weight: 700;
-        letter-spacing: 0.07em;
-        text-transform: uppercase;
-    }
-
-    .controls select {
+    .webcam-settings select {
         min-height: 36px;
         padding: 5px 8px;
         font-size: 12px;
@@ -305,12 +371,25 @@
 
     .resizer {
         position: absolute;
-        right: 0;
-        bottom: 0;
-        width: 16px;
-        height: 16px;
+        z-index: 3;
+        right: 4px;
+        bottom: 4px;
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 4px;
+        background: rgba(21, 23, 25, 0.92);
+        color: var(--color-text);
         cursor: se-resize;
-        background: linear-gradient(135deg, transparent 50%, var(--color-brand-text) 50%);
+        touch-action: none;
+    }
+
+    .resizer:hover {
+        border-color: var(--color-brand-text);
+        background: var(--color-surface-raised);
     }
 
     .drag-overlay {
@@ -318,5 +397,10 @@
         z-index: 1999;
         inset: 0;
         cursor: grabbing;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .webcam-actions,
+        .resizer { transition: none; }
     }
 </style>

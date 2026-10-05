@@ -7,12 +7,14 @@
 	let sourcesRestored = false;
 	const loadingTimers: Partial<Record<'cam1' | 'cam2', ReturnType<typeof setTimeout>>> = {};
 	import CameraView from "$lib/components/CameraView.svelte";
+	import OverlaySizeControls from "$lib/components/OverlaySizeControls.svelte";
 	import IframeSection from "$lib/components/IframeSection.svelte";
 	import { defaultCamSettings } from "$lib/constants";
 	import { LiveScoringClient, type ScoringStatus } from "$lib/liveScoring";
 	import { listBoards, parseScoringEventUrl, teamScoreForBoards, type LiveMatch } from "$lib/scoring";
 	import type { CamSettings, CamSetting } from "$lib/types";
 	import type { ScoringCelebration } from "$lib/scoringCelebration";
+	import { restoreOverlaySizes } from "$lib/overlaySizes";
 
 	// Zustand für verfügbare Geräte und ausgewählte IDs
 	let videoDevices: MediaDeviceInfo[] = [];
@@ -22,7 +24,10 @@
 	let selectedCam2: CameraSource = { kind: 'none' };
 	let cam1Label = "Heim";
 	let cam2Label = "Gast";
+	let overlaySizes = restoreOverlaySizes(null);
+	let overlaySizesRestored = false;
 	let showFloatingWebcam = false;
+	let webcamInteracting = false;
 	let settingsOpen = false;
 	let activeCameraSettings: 'cam1' | 'cam2' | null = null;
 	let settingsButton: HTMLButtonElement;
@@ -44,11 +49,21 @@
 	let contentArea: HTMLElement;
 
 	// Layout State
+	const cameraLayoutPresets = [
+		{ value: 'split', label: 'Beide Kameras · 50/50' },
+		{ value: 'cam1', label: 'Nur Kamera 1' },
+		{ value: 'cam2', label: 'Nur Kamera 2' },
+	] as const;
+	type CameraLayout = (typeof cameraLayoutPresets)[number]['value'];
+	let cameraLayout: CameraLayout = 'split';
 	let topHeight = 70; // in % when the live view is open
 	let leftWidth = 50; // in %
 	let isDraggingVertical = false;
 	let isDraggingHorizontal = false;
 	let showIframe = false;
+	let controlsVisible = true;
+	let controlsMounted = false;
+	let controlsTimer: ReturnType<typeof setTimeout> | null = null;
 
 	// Iframe Settings
 	let cropTop = 0;
@@ -89,12 +104,40 @@
 		offline: 'Verbindung unterbrochen – letzter Stand',
 		error: 'Scoring derzeit nicht erreichbar',
 	};
+	$: scoringStatusLabel = scoringStatusText[scoringStatus] + (scoringUrl && matches.length
+		? ' · ' + matches.length + (matches.length === 1 ? ' Match' : ' Matches') : '');
+	$: controlsBusy = settingsOpen || activeCameraSettings !== null || editingCam !== null ||
+		webcamInteracting || isDraggingVertical || isDraggingHorizontal || isDraggingScore1 || isDraggingScore2;
+	$: if (controlsMounted) scheduleControlsFade(controlsBusy);
 
-	async function openSettings(): Promise<void> {
+	function scheduleControlsFade(busy: boolean): void {
+		if (controlsTimer !== null) clearTimeout(controlsTimer);
+		controlsTimer = null;
+		controlsVisible = true;
+		if (!busy && controlsMounted) {
+			controlsTimer = setTimeout(() => {
+				controlsVisible = false;
+				controlsTimer = null;
+			}, 20_000);
+		}
+	}
+
+	function revealControls(): void {
+		scheduleControlsFade(controlsBusy);
+	}
+
+	function applyCameraLayout(layout: CameraLayout): void {
+		if (editingCam) return;
+		cameraLayout = layout;
+		if (layout === 'split') leftWidth = 50;
+		else if (activeCameraSettings !== layout) activeCameraSettings = null;
+		handleEnd();
+		handleScoreEnd();
+	}
+
+	function openSettings(): void {
 		activeCameraSettings = null;
 		settingsOpen = true;
-		await tick();
-		document.getElementById('scoring-event-url')?.focus();
 	}
 
 	async function closeSettings(): Promise<void> {
@@ -107,8 +150,10 @@
 		const closing = activeCameraSettings === slot;
 		settingsOpen = false;
 		activeCameraSettings = closing ? null : slot;
-		await tick();
-		document.getElementById(closing ? `camera-config-trigger-${slot}` : `cam-select-${slot}`)?.focus();
+		if (closing) {
+			await tick();
+			document.getElementById(`camera-config-trigger-${slot}`)?.focus();
+		}
 	}
 
 	async function closeCameraSettings(): Promise<void> {
@@ -230,6 +275,11 @@
 	}
 
 	onMount(() => {
+		controlsMounted = true;
+		window.addEventListener('pointermove', revealControls, { passive: true });
+		window.addEventListener('pointerdown', revealControls, true);
+		window.addEventListener('keydown', revealControls, true);
+		window.addEventListener('focusin', revealControls, true);
 		scoringClient = new LiveScoringClient({
 			onMatches: (next) => (matches = next),
 			onStatus: (next) => (scoringStatus = next),
@@ -260,6 +310,9 @@
 			}
 		}
 
+		overlaySizes = restoreOverlaySizes(localStorage.getItem('dartCamOverlaySizes'));
+		overlaySizesRestored = true;
+
 		const sources = restoreSources(localStorage.getItem('dartCamSources'), localStorage.getItem('dartCamSelections'));
 		selectedCam1 = sources.cam1; selectedCam2 = sources.cam2; sourcesRestored = true;
 		discovery = new DartRectifyDiscovery((connection) => bridge = connection); discovery.start();
@@ -280,10 +333,16 @@
 	});
 
 	onDestroy(() => {
+		controlsMounted = false;
+		if (controlsTimer !== null) clearTimeout(controlsTimer);
 		scoringClient?.stop();
 		Object.values(loadingTimers).forEach(clearTimeout);
 		discovery?.stop();
 		if (typeof window !== "undefined") {
+			window.removeEventListener('pointermove', revealControls);
+			window.removeEventListener('pointerdown', revealControls, true);
+			window.removeEventListener('keydown', revealControls, true);
+			window.removeEventListener('focusin', revealControls, true);
 			navigator.mediaDevices?.removeEventListener("devicechange", refreshKnownDevices);
 			window.removeEventListener("mousemove", handleMove);
 			window.removeEventListener("mouseup", handleEnd);
@@ -397,6 +456,7 @@
 	$: if (sourcesRestored && sourceKey(selectedCam2)) loadSettings('cam2', sourceKey(selectedCam2));
 	$: if (sourcesRestored && sourceKey(selectedCam1) && camSettings.cam1) saveSettings('cam1', sourceKey(selectedCam1), camSettings.cam1);
 	$: if (sourcesRestored && sourceKey(selectedCam2) && camSettings.cam2) saveSettings('cam2', sourceKey(selectedCam2), camSettings.cam2);
+	$: if (overlaySizesRestored) localStorage.setItem('dartCamOverlaySizes', JSON.stringify(overlaySizes));
 
 	$: {
 		if (sourcesRestored && typeof localStorage !== "undefined") {
@@ -422,37 +482,8 @@
 
 <svelte:window on:keydown={handleWindowKeydown} />
 
-<main class="app-shell" class:dragging={isDraggingVertical || isDraggingHorizontal}>
-    <header class="topbar">
-        <div class="app-identity">
-            <span class="app-title">SCO <strong>DARTCAMS</strong></span>
-            <span class="app-subtitle">Live-Kameraansicht</span>
-        </div>
-        <div class="top-actions">
-            <span class="ui-badge" class:ui-badge--success={bridge.status === 'online'} class:ui-badge--error={bridge.status === 'blocked'} title={connectionHelp[bridge.status]} aria-live="polite">DartRectify {connectionLabels[bridge.status]}</span>
-            {#if bridge.status !== 'online'}
-                <button type="button" class="ui-button ui-button--secondary ui-button--small"
-                    title={connectionHelp[bridge.status]} on:click={() => discovery?.retry()}>DartRectify verbinden</button>
-            {/if}
-            <span class="ui-badge {scoringStatus === 'live' ? 'ui-badge--success' : scoringStatus === 'error' ? 'ui-badge--error' : scoringStatus === 'connecting' || scoringStatus === 'offline' ? 'ui-badge--warning' : ''}"
-                aria-live="polite">
-                {scoringStatusText[scoringStatus]}{scoringUrl && matches.length ? ' · ' + matches.length + (matches.length === 1 ? ' Match' : ' Matches') : ''}
-            </span>
-            <button type="button" class="ui-button ui-button--secondary settings-trigger"
-                bind:this={settingsButton} aria-controls="settings-panel" aria-expanded={settingsOpen}
-                on:click={() => settingsOpen ? closeSettings() : openSettings()}>
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-                    stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-                    <path d="M3 6h18M3 12h18M3 18h18" />
-                    <circle cx="8" cy="6" r="2" fill="var(--color-background)" />
-                    <circle cx="16" cy="12" r="2" fill="var(--color-background)" />
-                    <circle cx="10" cy="18" r="2" fill="var(--color-background)" />
-                </svg>
-                Einstellungen
-            </button>
-        </div>
-    </header>
-
+<main class="app-shell" class:dragging={isDraggingVertical || isDraggingHorizontal}
+    style="--controls-opacity: {controlsVisible ? 1 : 0}; --controls-pointer-events: {controlsVisible ? 'auto' : 'none'};">
     {#if bridge.status === 'permission' || bridge.status === 'blocked'}
         <div class="camera-notice" role="status">{connectionHelp[bridge.status]}</div>
     {/if}
@@ -471,12 +502,14 @@
                 <CameraView
                     bind:this={cam1View}
                     camId="cam1"
-                    width={leftWidth}
+                    width={cameraLayout === 'cam1' ? 100 : leftWidth}
+                    visible={cameraLayout !== 'cam2'}
                     bind:settings={camSettings.cam1}
                     editLocked={editingCam !== null}
                     {bridge}
                     bind:selectedSource={selectedCam1}
                     bind:label={cam1Label}
+                    {overlaySizes}
                     bind:containerElement={container1}
                     bind:boardKey={cam1BoardKey}
                     bind:scorePos={cam1ScorePos}
@@ -497,26 +530,30 @@
                     on:scoreDragStart={(event) => startScoreDrag(1, event.detail.originalEvent)}
                 />
 
-                <div class="resizer-horizontal" role="slider" aria-label="Kamerabreite anpassen"
-                    aria-orientation="vertical" aria-valuemin="10" aria-valuemax="90"
-                    aria-valuenow={Math.round(leftWidth)} tabindex="0"
-                    on:mousedown={startHorizontalDrag} on:touchstart={startHorizontalDrag}
-                    on:keydown={(event) => {
-                        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-                            event.preventDefault();
-                            leftWidth = Math.max(10, Math.min(90, leftWidth + (event.key === 'ArrowRight' ? 5 : -5)));
-                        }
-                    }}><span></span></div>
+                {#if cameraLayout === 'split'}
+                    <div class="resizer-horizontal" role="slider" aria-label="Kamerabreite anpassen"
+                        aria-orientation="vertical" aria-valuemin="10" aria-valuemax="90"
+                        aria-valuenow={Math.round(leftWidth)} tabindex="0"
+                        on:mousedown={startHorizontalDrag} on:touchstart={startHorizontalDrag}
+                        on:keydown={(event) => {
+                            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                                event.preventDefault();
+                                leftWidth = Math.max(10, Math.min(90, leftWidth + (event.key === 'ArrowRight' ? 5 : -5)));
+                            }
+                        }}><span></span></div>
+                {/if}
 
                 <CameraView
                     bind:this={cam2View}
                     camId="cam2"
-                    width={100 - leftWidth}
+                    width={cameraLayout === 'cam2' ? 100 : 100 - leftWidth}
+                    visible={cameraLayout !== 'cam1'}
                     bind:settings={camSettings.cam2}
                     editLocked={editingCam !== null}
                     {bridge}
                     bind:selectedSource={selectedCam2}
                     bind:label={cam2Label}
+                    {overlaySizes}
                     bind:containerElement={container2}
                     bind:boardKey={cam2BoardKey}
                     bind:scorePos={cam2ScorePos}
@@ -563,7 +600,8 @@
         {/if}
 
         <IframeSection {scoringUrl} {cropTop} {cropBottom} {iframeZoom}
-            bind:showFloatingWebcam {showIframe} {videoDevices}>
+            bind:showFloatingWebcam {showIframe} {videoDevices}
+            on:interaction={(event) => webcamInteracting = event.detail.active}>
             <div slot="overlay">
                 {#if isDraggingVertical || isDraggingHorizontal}
                     <div class="iframe-overlay"></div>
@@ -572,66 +610,138 @@
         </IframeSection>
     </div>
 
+    <footer class="app-bar" aria-label="App-Status und Einstellungen">
+        <div class="app-bar-brand">
+            <span class="app-title">SCO <strong>DARTCAMS</strong></span>
+            <div class="layout-presets" role="group" aria-label="Kamera-Layout">
+                {#each cameraLayoutPresets as preset}
+                    <button type="button" class="ui-icon-button ui-button--secondary layout-preset"
+                        aria-label={preset.label} title={editingCam ? 'Bildbearbeitung zuerst schließen' : preset.label}
+                        aria-pressed={cameraLayout === preset.value && (preset.value !== 'split' || leftWidth === 50)}
+                        disabled={editingCam !== null} on:click={() => applyCameraLayout(preset.value)}>
+                        <svg viewBox="0 0 24 20" width="22" height="18" fill="none" stroke="currentColor"
+                            stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
+                            <rect x="2" y="3" width="20" height="14" rx="2" />
+                            {#if preset.value === 'split'}
+                                <path d="M12 3v14" />
+                                <text x="7" y="13" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">1</text>
+                                <text x="17" y="13" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">2</text>
+                            {:else}
+                                <text x="12" y="14" text-anchor="middle" font-size="10" fill="currentColor" stroke="none">{preset.value === 'cam1' ? '1' : '2'}</text>
+                            {/if}
+                        </svg>
+                    </button>
+                {/each}
+            </div>
+        </div>
+        <div class="app-bar-actions">
+            <div class="bar-status" role="group" aria-label="Verbindungsstatus">
+                <span class="ui-badge" class:ui-badge--success={bridge.status === 'online'}
+                    class:ui-badge--error={bridge.status === 'blocked'} title={connectionHelp[bridge.status]} aria-live="polite">
+                    <span class="badge-label">DartRectify {connectionLabels[bridge.status]}</span>
+                </span>
+                <span class="ui-badge {scoringStatus === 'live' ? 'ui-badge--success' : scoringStatus === 'error' ? 'ui-badge--error' : scoringStatus === 'connecting' || scoringStatus === 'offline' ? 'ui-badge--warning' : ''}"
+                    title={scoringStatusLabel} aria-live="polite">
+                    <span class="badge-label">{scoringStatusLabel}</span>
+                </span>
+            </div>
+            <div class="bar-buttons" role="group" aria-label="Verbindungen und Einstellungen">
+                {#if bridge.status !== 'online'}
+                    <button type="button" class="ui-button ui-button--secondary bar-button"
+                        title="DartRectify verbinden · {connectionHelp[bridge.status]}"
+                        on:click={() => discovery?.retry()}>DartRectify verbinden</button>
+                {/if}
+                <button type="button" class="ui-icon-button ui-button--secondary settings-trigger"
+                    aria-label="Einstellungen" title="Einstellungen"
+                    bind:this={settingsButton} aria-controls="settings-panel" aria-expanded={settingsOpen}
+                    on:click={() => settingsOpen ? closeSettings() : openSettings()}>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                        stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                        <path d="M3 6h18M3 12h18M3 18h18" />
+                        <circle cx="8" cy="6" r="2" fill="var(--color-background)" />
+                        <circle cx="16" cy="12" r="2" fill="var(--color-background)" />
+                        <circle cx="10" cy="18" r="2" fill="var(--color-background)" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </footer>
+
     <aside id="settings-panel" class="settings-drawer" aria-labelledby="settings-title" hidden={!settingsOpen}>
         <div class="drawer-header">
-            <div>
-                <span class="drawer-eyebrow">SCO Dartcams</span>
-                <h2 id="settings-title">Einstellungen</h2>
-            </div>
+            <h2 id="settings-title">Einstellungen</h2>
             <button type="button" class="ui-icon-button" aria-label="Einstellungen schließen"
                 on:click={closeSettings}>×</button>
         </div>
         <div class="drawer-body">
-            <section class="settings-section" aria-labelledby="dartrectify-title">
-                <h3 id="dartrectify-title">DartRectify</h3>
-                <p>{bridge.status === 'online' ? 'Die lokale App ist verbunden. Heim und Gast stehen in der Kameraauswahl bereit.' : 'Starte DartRectify auf diesem PC. Erlaube dieser Website gegebenenfalls den lokalen Netzwerkzugriff in den Browser-Einstellungen.'}</p>
-                <button class="ui-button ui-button--secondary" type="button" on:click={() => discovery?.retry()}>Verbindung erneut prüfen</button>
-            </section>
-            <section class="settings-section" aria-labelledby="scoring-title">
-                <h3 id="scoring-title" class="ui-section-title">Live-Scoring</h3>
-                <form class="settings-form" on:submit|preventDefault={() => activateScoringUrl(scoringUrlDraft)}>
-                    <div>
-                        <label class="ui-label" for="scoring-event-url">3K-Live-Event-Link</label>
-                        <input class="ui-field" id="scoring-event-url" type="text" inputmode="url"
-                            bind:value={scoringUrlDraft} aria-invalid={!!scoringError}
-                            placeholder="https://live.3k-darts.com/event/5/2995582" spellcheck="false" />
-                    </div>
-                    <button type="submit" class="ui-button ui-button--primary">Verbinden</button>
-                </form>
-                {#if scoringError}<p class="field-error" role="alert">{scoringError}</p>{/if}
-                <p class="ui-help">{scoringStatusText[scoringStatus]}</p>
-            </section>
-
-            <section class="settings-section" aria-labelledby="display-title">
-                <h3 id="display-title" class="ui-section-title">Ansicht</h3>
-                <div class="display-actions">
-                    <button type="button" class="ui-button ui-button--secondary" aria-pressed={showIframe}
-                        disabled={!scoringUrl} on:click={() => (showIframe = !showIframe)}>
-                        3K-Live-Ansicht {showIframe ? 'ausblenden' : 'einblenden'}
-                    </button>
-                    <button type="button" class="ui-button ui-button--secondary" aria-pressed={showFloatingWebcam}
-                        on:click={() => (showFloatingWebcam = !showFloatingWebcam)}>
-                        Webcam {showFloatingWebcam ? 'schließen' : 'öffnen'}
-                    </button>
+            <details class="settings-section" name="app-settings">
+                <summary><h3>Einblendungen</h3></summary>
+                <div class="settings-section-body">
+                    <OverlaySizeControls bind:sizes={overlaySizes} />
                 </div>
-                {#if showIframe}
-                    <div class="iframe-settings ui-panel">
-                        <label class="ui-label" for="crop-top">Oben abschneiden (px)</label>
-                        <input class="ui-field" id="crop-top" type="number" min="0" max="2000" bind:value={cropTop} />
-                        <label class="ui-label" for="crop-bottom">Unten abschneiden (px)</label>
-                        <input class="ui-field" id="crop-bottom" type="number" min="0" max="2000" bind:value={cropBottom} />
-                        <label class="ui-label" for="iframe-zoom">Zoom · {Math.round(iframeZoom * 100)}%</label>
-                        <input class="ui-range" id="iframe-zoom" type="range" min="0.5" max="2" step="0.1"
-                            bind:value={iframeZoom} />
+            </details>
+            <details class="settings-section" name="app-settings">
+                <summary><h3>DartRectify</h3></summary>
+                <div class="settings-section-body">
+                    <button class="ui-button ui-button--secondary" type="button" on:click={() => discovery?.retry()}>Verbindung erneut prüfen</button>
+                </div>
+            </details>
+            <details class="settings-section" name="app-settings">
+                <summary><h3>Live-Scoring</h3></summary>
+                <div class="settings-section-body">
+                    <form class="settings-form" on:submit|preventDefault={() => activateScoringUrl(scoringUrlDraft)}>
+                        <div>
+                            <label class="ui-label" for="scoring-event-url">3K-Live-Event-Link</label>
+                            <div class="event-link-field">
+                                <input class="ui-field" id="scoring-event-url" type="text" inputmode="url"
+                                    bind:value={scoringUrlDraft} aria-invalid={!!scoringError}
+                                    placeholder="https://live.3k-darts.com/event/5/2995582" spellcheck="false" />
+                                {#if scoringUrlDraft}
+                                    <button type="button" class="ui-icon-button event-link-clear"
+                                        aria-label="Event-Link löschen" title="Event-Link löschen"
+                                        on:click={() => { scoringUrlDraft = ''; scoringError = ''; }}>×</button>
+                                {/if}
+                            </div>
+                        </div>
+                        <button type="submit" class="ui-button ui-button--primary">Verbinden</button>
+                    </form>
+                    {#if scoringError}<p class="field-error" role="alert">{scoringError}</p>{/if}
+                </div>
+            </details>
+
+            <details class="settings-section" name="app-settings">
+                <summary><h3>Ansicht</h3></summary>
+                <div class="settings-section-body">
+                    <div class="display-actions">
+                        <button type="button" class="ui-button ui-button--secondary" aria-pressed={showIframe}
+                            disabled={!scoringUrl} on:click={() => (showIframe = !showIframe)}>
+                            3K-Live-Ansicht {showIframe ? 'ausblenden' : 'einblenden'}
+                        </button>
+                        <button type="button" class="ui-button ui-button--secondary" aria-pressed={showFloatingWebcam}
+                            on:click={() => (showFloatingWebcam = !showFloatingWebcam)}>
+                            Webcam {showFloatingWebcam ? 'schließen' : 'öffnen'}
+                        </button>
                     </div>
-                {/if}
-            </section>
+                    {#if showIframe}
+                        <div class="iframe-settings ui-panel">
+                            <label class="ui-label" for="crop-top">Oben abschneiden (px)</label>
+                            <input class="ui-field" id="crop-top" type="number" min="0" max="2000" bind:value={cropTop} />
+                            <label class="ui-label" for="crop-bottom">Unten abschneiden (px)</label>
+                            <input class="ui-field" id="crop-bottom" type="number" min="0" max="2000" bind:value={cropBottom} />
+                            <label class="ui-label" for="iframe-zoom">Zoom · {Math.round(iframeZoom * 100)}%</label>
+                            <input class="ui-range" id="iframe-zoom" type="range" min="0.5" max="2" step="0.1"
+                                bind:value={iframeZoom} />
+                        </div>
+                    {/if}
+                </div>
+            </details>
         </div>
     </aside>
 </main>
 
 <style>
     .app-shell {
+        --app-bar-height: 40px;
         position: relative;
         display: flex;
         flex-direction: column;
@@ -647,7 +757,7 @@
         user-select: none;
     }
 
-    .topbar {
+    .app-bar {
         position: relative;
         z-index: 30;
         display: flex;
@@ -655,22 +765,84 @@
         align-items: center;
         justify-content: space-between;
         gap: var(--space-3);
-        height: 60px;
-        padding: 0 var(--space-3);
-        border-bottom: 1px solid var(--color-border);
+        height: var(--app-bar-height);
+        padding: 0 var(--space-2);
+        border-top: 1px solid var(--color-border);
         background: var(--color-surface);
+        opacity: var(--controls-opacity, 1);
+        pointer-events: var(--controls-pointer-events, auto);
+        transition: opacity 200ms ease;
     }
 
-    .app-identity,
-    .top-actions {
+    .app-bar:has(:focus-visible) {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .camera-notice .ui-button {
+        opacity: var(--controls-opacity, 1);
+        pointer-events: var(--controls-pointer-events, auto);
+        transition: opacity 200ms ease;
+    }
+
+    .camera-notice .ui-button:focus-visible {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .app-bar-brand,
+    .layout-presets,
+    .app-bar-actions,
+    .bar-status,
+    .bar-buttons {
         display: flex;
         align-items: center;
-        gap: var(--space-3);
         min-width: 0;
     }
 
+    .app-bar-actions {
+        gap: var(--space-2);
+        margin-left: auto;
+    }
+
+    .app-bar-brand {
+        flex: none;
+        gap: 12px;
+    }
+
+    .layout-presets {
+        gap: var(--space-1);
+    }
+
+    .layout-preset {
+        width: 32px;
+        min-height: 28px;
+        padding: 0;
+    }
+
+    .layout-preset[aria-pressed="true"] {
+        border-color: var(--color-brand-text);
+        background: var(--color-brand-active);
+        color: var(--color-text);
+    }
+
+    .layout-preset text {
+        font-family: var(--font-body);
+        font-weight: 600;
+    }
+
+    .bar-status,
+    .bar-buttons {
+        gap: var(--space-1);
+    }
+
+    .bar-buttons {
+        flex: none;
+    }
+
     .app-title {
-        font: 500 21px/1 var(--font-display);
+        flex: none;
+        font: 500 18px/1 var(--font-display);
         letter-spacing: 0.04em;
         white-space: nowrap;
     }
@@ -680,35 +852,44 @@
         font-weight: 700;
     }
 
-    .app-subtitle {
-        padding-left: var(--space-3);
-        border-left: 1px solid var(--color-border);
-        color: var(--color-text-muted);
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        white-space: nowrap;
+    .bar-status .ui-badge {
+        min-width: 0;
+        min-height: 22px;
+        max-width: min(30vw, 360px);
+        gap: var(--space-1);
+        padding: 2px 7px;
+        font-size: 10px;
+        line-height: 1.2;
     }
 
-    .top-actions .ui-badge {
-        max-width: 360px;
+    .bar-status .ui-badge::before {
+        flex: none;
+    }
+
+    .badge-label {
+        min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
     }
 
+    .bar-button,
     .settings-trigger {
-        min-height: 34px;
-        gap: 6px;
-        padding: 0 10px;
-        font-size: 12px;
+        height: 28px;
+        min-height: 28px;
+        padding: 0 var(--space-2);
+        font-size: 11px;
         white-space: nowrap;
+    }
+
+    .settings-trigger {
+        width: 28px;
+        padding: 0;
     }
 
     .camera-notice {
         position: absolute;
         z-index: 400;
-        top: 68px;
+        bottom: calc(var(--app-bar-height) + var(--space-2));
         left: 50%;
         display: flex;
         align-items: center;
@@ -802,8 +983,16 @@
         border: 1px solid var(--color-border);
         border-radius: var(--radius-sm);
         background: var(--color-surface);
-        transition: background 150ms ease, border-color 150ms ease;
+        opacity: var(--controls-opacity, 1);
+        pointer-events: var(--controls-pointer-events, auto);
+        transition: background 150ms ease, border-color 150ms ease, opacity 200ms ease;
         touch-action: none;
+    }
+
+    .resizer-horizontal:focus-visible,
+    .resizer-vertical:focus-visible {
+        opacity: 1;
+        pointer-events: auto;
     }
 
     .resizer-horizontal {
@@ -850,9 +1039,9 @@
     .settings-drawer {
         position: absolute;
         z-index: 500;
-        top: 60px;
+        top: 0;
         right: 0;
-        bottom: 0;
+        bottom: var(--app-bar-height);
         display: flex;
         flex-direction: column;
         width: min(360px, 34vw);
@@ -871,27 +1060,20 @@
         align-items: center;
         justify-content: space-between;
         gap: var(--space-2);
-        padding: var(--space-3);
+        padding: var(--space-2) var(--space-3);
         border-bottom: 1px solid var(--color-border);
         background: var(--color-surface-raised);
     }
 
-    .drawer-eyebrow {
-        color: var(--color-brand-text);
-        font-size: 10px;
-        font-weight: 700;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-    }
-
     .drawer-header h2 {
-        margin: 2px 0 0;
-        font: 600 24px/1.15 var(--font-display);
-        text-transform: uppercase;
+        margin: 0;
+        font: 600 18px/1.2 var(--font-display);
     }
 
     .drawer-header .ui-icon-button {
-        font-size: 25px;
+        width: 28px;
+        min-height: 28px;
+        font-size: 22px;
         font-weight: 400;
         line-height: 1;
     }
@@ -900,7 +1082,7 @@
         display: flex;
         flex: 1;
         flex-direction: column;
-        gap: var(--space-4);
+        gap: var(--space-2);
         min-height: 0;
         overflow-y: auto;
         overscroll-behavior: contain;
@@ -908,14 +1090,65 @@
     }
 
     .settings-section {
-        display: grid;
-        gap: var(--space-2);
-        padding-bottom: var(--space-4);
-        border-bottom: 1px solid var(--color-border);
+        flex: none;
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-sm);
+        background: var(--color-background);
     }
 
-    .settings-section:last-child {
-        border-bottom: 0;
+    .settings-section summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-2);
+        min-height: 44px;
+        padding: 10px 12px;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        list-style: none;
+        user-select: none;
+    }
+
+    .settings-section summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .settings-section summary::after {
+        content: '';
+        flex: none;
+        width: 7px;
+        height: 7px;
+        margin-right: 3px;
+        border-right: 2px solid var(--color-text-muted);
+        border-bottom: 2px solid var(--color-text-muted);
+        transform: rotate(45deg);
+    }
+
+    .settings-section summary:hover,
+    .settings-section[open] summary {
+        background: var(--color-surface-raised);
+    }
+
+    .settings-section[open] summary {
+        border-bottom: 1px solid var(--color-border);
+        border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    }
+
+    .settings-section[open] summary::after {
+        border-color: var(--color-brand-text);
+        transform: translateY(3px) rotate(225deg);
+    }
+
+    .settings-section h3 {
+        margin: 0;
+        color: var(--color-text);
+        font: 500 16px/1.3 var(--font-display);
+    }
+
+    .settings-section-body {
+        display: grid;
+        gap: var(--space-2);
+        padding: 12px;
     }
 
     .settings-form,
@@ -928,6 +1161,27 @@
     .settings-form .ui-button,
     .display-actions .ui-button {
         width: 100%;
+    }
+
+    .event-link-field {
+        position: relative;
+    }
+
+    .event-link-field .ui-field {
+        padding-right: 42px;
+    }
+
+    .event-link-clear {
+        position: absolute;
+        top: 50%;
+        right: 7px;
+        width: 28px;
+        min-height: 28px;
+        padding: 0;
+        transform: translateY(-50%);
+        font-size: 22px;
+        font-weight: 400;
+        line-height: 1;
     }
 
     .iframe-settings {
@@ -948,10 +1202,11 @@
         font-size: 12px;
     }
 
-    @media (max-height: 700px) {
-        .topbar { height: 52px; }
-        .settings-drawer { top: 52px; }
-        .camera-notice { top: 60px; }
-        .drawer-body { gap: var(--space-3); }
+    @media (prefers-reduced-motion: reduce) {
+        .app-bar,
+        .camera-notice .ui-button,
+        .resizer-horizontal,
+        .resizer-vertical { transition: none; }
     }
+
 </style>

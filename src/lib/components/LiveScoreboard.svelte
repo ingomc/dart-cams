@@ -6,9 +6,11 @@
 
     export let data: MatchData;
     export let stale = false;
+    export let scale = 100;
 </script>
 
-<div class="scoreboard" class:stale aria-label="Board {data.match.board ?? '–'}: Live-Scoring{stale ? ', letzter Stand' : ''}">
+<div class="scoreboard" class:stale aria-label="Board {data.match.board ?? '–'}: Live-Scoring{stale ? ', letzter Stand' : ''}"
+    style:--score-scale={scale / 100}>
     {#each [0, 1] as index}
         {@const player = data.match.matchPlayers[index]}
         {@const winner = isWinner(player?.points)}
@@ -29,7 +31,7 @@
                     {:else if remaining === '–'}
                         {remaining}
                     {:else}
-                        {#key `${data.match.matchKey ?? ''}/${data.match.board ?? ''}/${player?.playerName ?? ''}`}
+                        {#key `${data.match.matchKey ?? ''}/${data.match.board ?? ''}/${player?.playerName ?? ''}/${scale}`}
                             <TextMorph text={remaining} duration={180} ease="ease-out" scale={false} respectReducedMotion={true} locale="de" />
                         {/key}
                     {/if}
@@ -57,12 +59,13 @@
 
     .player-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 54px 20px 28px 48px;
+        grid-template-columns: minmax(0, 20ch) calc(54px * var(--score-scale)) calc(20px * var(--score-scale))
+            calc(28px * var(--score-scale)) calc(48px * var(--score-scale));
         align-items: center;
-        gap: 6px;
-        min-height: 28px;
-        padding: 3px 8px;
-        border-left: 3px solid transparent;
+        gap: calc(6px * var(--score-scale));
+        min-height: calc(28px * var(--score-scale));
+        padding: calc(3px * var(--score-scale)) calc(8px * var(--score-scale));
+        border-left: calc(3px * var(--score-scale)) solid transparent;
     }
 
     .player-row + .player-row {
@@ -77,8 +80,9 @@
     .player-name {
         min-width: 0;
         overflow: hidden;
-        font-size: 12px;
+        font-size: calc(12px * var(--score-scale));
         font-weight: 700;
+        line-height: 1.2;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
@@ -92,30 +96,30 @@
 
     .average {
         color: var(--color-text-secondary);
-        font-size: 11px;
+        font-size: calc(11px * var(--score-scale));
     }
 
     .legs {
-        padding: 2px 0;
+        padding: calc(2px * var(--score-scale)) 0;
         border: 1px solid var(--color-border);
         border-radius: 3px;
         background: rgba(255, 255, 255, 0.06);
-        font: 600 13px/1 var(--font-display);
+        font: 600 calc(13px * var(--score-scale))/1 var(--font-display);
         text-align: center;
     }
 
     .last-score {
         color: var(--color-text-muted);
-        font: 500 15px/1 var(--font-display);
+        font: 500 calc(15px * var(--score-scale))/1 var(--font-display);
     }
 
     .remaining strong {
-        font: 600 20px/1 var(--font-display);
+        font: 600 calc(20px * var(--score-scale))/1 var(--font-display);
     }
 
     .remaining.winner strong {
         color: #ffd76a;
-        font-size: 18px;
+        font-size: calc(18px * var(--score-scale));
     }
 
     .sr-only {

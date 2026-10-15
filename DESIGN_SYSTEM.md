@@ -76,6 +76,12 @@ Beim ersten Laden werden vorhandene Bildwerte unabhängig in alle drei Layouts u
 
 Kameraquellen, Bezeichnungen, Boardzuweisungen und globale Schriftgrößen behalten ihre bisherigen Speicher und gelten unabhängig vom Bildprofil. Während einer Bildbearbeitung sind die Layout-Buttons gesperrt.
 
+## Livestream zu Owncast
+
+Der kompakte Button **Stream** in der unteren Leiste öffnet das Akkordeon **Livestream** mit Sendesymbol. Dort stehen Helferstatus, Zuschauer-Link, RTMP-Server, maskierter Stream-Key, Start/Stop und der kopierbare Zuschauer-Link. Beim Start schließt das Panel; die Browserfreigabe hebt den aktuellen Tab hervor. Ein laufender Stream zeigt unten **LIVE** mit Stoppsymbol in Markenrot. Während des Verbindens steht dort **Verbinde…**; Fehler öffnen den Livestream-Bereich mit einer konkreten Meldung. Der Status „LIVE“ erscheint erst nach Encoder-Fortschritt zum Server.
+
+Die Controls nutzen dieselben Fokus- und Idle-Regeln wie die übrige Leiste. Stoppen ist zusätzlich über die sichtbare Freigabeanzeige des Browsers möglich. Der Stream übernimmt das gerenderte Tab-Bild einschließlich geöffneter Menüs. Kamera-/Scoringlogik und gespeicherte Bildprofile bleiben unabhängig. Der Stream-Key liegt ausschließlich im lokalen Helfer bis zu dessen Neustart. Einrichtung und Grenzen: [Livestream-Anleitung](docs/LIVESTREAM.md).
+
 ## Bewegung
 
 Die Kameraauswahl der schwebenden Webcam bietet „Geräte aktualisieren“, um die Geräteliste ohne Seitenreload neu zu laden und bei Bedarf die Kamera-Freigabe anzufragen. „Bild spiegeln“ schaltet die horizontale Spiegelung ein oder aus; standardmäßig ist sie aktiv, der Button zeigt den Zustand rot an. Startfehler erscheinen direkt im Webcam-Menü. Beim Wechseln oder Schließen werden verspätet gelieferte Streams beendet.

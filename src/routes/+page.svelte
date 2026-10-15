@@ -7,6 +7,22 @@
 	let discovery: DartRectifyDiscovery;
 	let sourcesRestored = false;
 	import SettingsSection from "$lib/components/SettingsSection.svelte";
+	import LivestreamSettings from '$lib/components/LivestreamSettings.svelte';
+	import { LivestreamClient } from '$lib/streaming/client';
+	import { initialStreamState, isStreamActive } from '$lib/streaming/protocol';
+	let livestream: LivestreamClient | undefined;
+	let streamState = { ...initialStreamState };
+	$: streamActive = isStreamActive(streamState.phase);
+	function showStreamSettings(): void {
+		openSettings();
+		activeSettingsSection = 'settings-stream';
+	}
+	function startStream(): void {
+		settingsOpen = false;
+		activeCameraSettings = null;
+		void livestream?.start();
+	}
+	function stopStream(): void { livestream?.stop(); }
 	let activeSettingsSection = "";
 	import CameraView from "$lib/components/CameraView.svelte";
 	import OverlaySizeControls from "$lib/components/OverlaySizeControls.svelte";
@@ -343,6 +359,11 @@
 	}
 
 	onMount(() => {
+		livestream = new LivestreamClient(state => {
+			streamState = state;
+			if (state.phase === 'error') showStreamSettings();
+		});
+		window.addEventListener('pagehide', stopStream);
 		unsubscribeDiagnostics = cameraDiagnostics.subscribe(() => {
 			diagnosticCount = cameraDiagnostics.snapshot().length;
 			diagnosticStorageAvailable = cameraDiagnostics.storageAvailable;
@@ -437,6 +458,7 @@
 	});
 
 	onDestroy(() => {
+		livestream?.dispose();
 		unsubscribeDiagnostics?.();
 		if (diagnosticPruneTimer) clearInterval(diagnosticPruneTimer);
 		if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -446,6 +468,7 @@
 		autoScoringClient?.stop();
 		discovery?.stop();
 		if (typeof window !== "undefined") {
+			window.removeEventListener('pagehide', stopStream);
 			window.removeEventListener('pointermove', revealControls);
 			window.removeEventListener('pointerdown', revealControls, true);
 			window.removeEventListener('keydown', revealControls, true);
@@ -742,6 +765,16 @@
                 </span>
             </div>
             <div class="bar-buttons" role="group" aria-label="Verbindungen und Einstellungen">
+                <button type="button" class="ui-button ui-button--secondary bar-button stream-button"
+                    class:streaming={streamActive} aria-label={streamActive ? 'Livestream stoppen' : 'Livestream einrichten'}
+                    title={streamActive ? 'Livestream stoppen' : 'Livestream'}
+                    on:click={() => streamActive ? stopStream() : showStreamSettings()}>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        {#if streamActive}<rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" />
+                        {:else}<circle cx="12" cy="12" r="3" /><path d="M6.3 6.3a8 8 0 0 0 0 11.4M17.7 6.3a8 8 0 0 1 0 11.4M3.5 3.5a12 12 0 0 0 0 17M20.5 3.5a12 12 0 0 1 0 17" />{/if}
+                    </svg>
+                    {streamState.phase === 'live' ? 'LIVE' : streamActive ? 'Verbinde…' : 'Stream'}
+                </button>
                 {#if bridge.status !== 'online'}
                     <button type="button" class="ui-button ui-button--secondary bar-button"
                         title="DartRectify verbinden · {connectionHelp[bridge.status]}"
@@ -845,6 +878,9 @@
                         </div>
                     {/if}
                 </div>
+            </SettingsSection>
+            <SettingsSection id="settings-stream" title="Livestream" icon="M9 8l7 4-7 4V8ZM5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14" bind:active={activeSettingsSection}>
+                <LivestreamSettings client={livestream} state={streamState} onStart={startStream} />
             </SettingsSection>
             <SettingsSection id="settings-diagnostics" title="Kamera-Diagnose" icon="M3 12h4l2-5 4 10 2-5h6M3 20h18" bind:active={activeSettingsSection}>
                 <div class="settings-section-body">
@@ -978,6 +1014,9 @@
     .bar-buttons {
         flex: none;
     }
+
+    .stream-button { gap: 6px; }
+    .stream-button.streaming { background: var(--color-brand-active); border-color: var(--color-brand-text); color: white; }
 
     .app-title {
         flex: none;

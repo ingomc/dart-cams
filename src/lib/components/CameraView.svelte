@@ -29,6 +29,7 @@
     export let label: string;
     export let logoUrl: string | null = null;
     export let logoTeamName = '';
+    export let teamTotal: { name: string; sets: string; legs: string } | null = null;
     export let overlaySizes: OverlaySizes = { ...defaultOverlaySizes };
     export let matches: MatchData["match"][];
     export let videoDevices: MediaDeviceInfo[] = [];
@@ -97,6 +98,9 @@
     });
     $: selectedDeviceId = sourceKey(selectedSource);
     $: cameraName = label.trim() || (camId === 'cam1' ? 'Heim' : 'Gast');
+    $: teamTotalDescription = teamTotal
+        ? `${teamTotal.name}: ${teamTotal.sets} gewonnene Spiele/Sätze, ${teamTotal.legs === '–' ? 'Legstand nicht verfügbar' : `${teamTotal.legs} gewonnene Legs`}${scoringStatus === 'live' ? '' : ', letzter Stand'}`
+        : '';
     $: rectified = selectedSource.kind === 'dartrectify';
     $: displayedSettings = rectified ? rectifiedSettings(draft ?? settings) : draft ?? settings;
     $: selectedMatch = boardKey ? matchForBoard(matches, boardKey) : null;
@@ -285,12 +289,19 @@
     <BoardCelebration event={visibleCelebration} />
     {#if !draft}
         <div class="camera-label-controls" class:right={camId === 'cam2'} bind:clientHeight={labelHeight}>
-            <span class="cam-label" title={cameraName}>
+            <span class="cam-label" title={teamTotalDescription ? `${cameraName} · ${teamTotalDescription}` : cameraName}>
                 {#if logoUrl && failedLogoUrl !== logoUrl}
                     <img class="team-logo" src={logoUrl} alt={logoTeamName} referrerpolicy="no-referrer"
                         on:error={() => (failedLogoUrl = logoUrl)} />
                 {/if}
                 <span class="cam-label-text">{cameraName}</span>
+                {#if teamTotal}
+                    <span class="team-total" role="status" aria-live="polite" aria-atomic="true">
+                        <span class="sr-only">{teamTotalDescription}</span>
+                        <strong class="team-sets" aria-hidden="true">{teamTotal.sets}</strong>
+                        <span class="team-legs" aria-hidden="true">({teamTotal.legs})</span>
+                    </span>
+                {/if}
             </span>
             <button id="camera-config-trigger-{camId}" type="button" class="camera-gear"
                 aria-label="{cameraName}: Einstellungen {configOpen ? 'schließen' : 'öffnen'}"
@@ -633,21 +644,49 @@
         align-items: center;
         gap: calc(8px * var(--camera-label-scale));
         min-width: 0;
-        max-width: 24ch;
         overflow: hidden;
         padding: calc(5px * var(--camera-label-scale)) calc(12px * var(--camera-label-scale)) calc(6px * var(--camera-label-scale));
         border-left: calc(3px * var(--camera-label-scale)) solid var(--color-brand);
         border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
         background: rgba(21, 23, 25, 0.88);
         font: 600 calc(17px * var(--camera-label-scale))/1.2 var(--font-display);
-        text-overflow: ellipsis;
         white-space: nowrap;
+    }
+
+    .camera-label-controls.right .cam-label {
+        flex-direction: row-reverse;
+        border-left: 0;
+        border-right: calc(3px * var(--camera-label-scale)) solid var(--color-brand);
+        border-radius: var(--radius-sm) 0 0 var(--radius-sm);
     }
 
     .cam-label-text {
         min-width: 0;
+        max-width: 24ch;
         overflow: hidden;
         text-overflow: ellipsis;
+    }
+
+    .team-total {
+        display: inline-flex;
+        flex: none;
+        align-items: baseline;
+        gap: calc(4px * var(--camera-label-scale));
+        color: var(--color-text);
+        font-variant-numeric: tabular-nums;
+    }
+
+    .camera-label-controls.right .team-total { flex-direction: row-reverse; }
+    .team-sets { font-weight: 700; }
+    .team-legs { opacity: 0.65; }
+
+    .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
     }
 
     .team-logo {

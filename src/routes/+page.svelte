@@ -604,6 +604,7 @@
                     bind:label={cam1Label}
                     logoUrl={selectedFixture?.home.logoUrl ?? null}
                     logoTeamName={selectedFixture?.home.name ?? ''}
+                    teamTotal={teamScore ? { name: teamScore.home, sets: teamScore.homeScore, legs: teamScore.homeLegs } : null}
                     {overlaySizes}
                     bind:containerElement={container1}
                     bind:boardKey={cam1BoardKey}
@@ -652,6 +653,7 @@
                     bind:label={cam2Label}
                     logoUrl={selectedFixture?.guest.logoUrl ?? null}
                     logoTeamName={selectedFixture?.guest.name ?? ''}
+                    teamTotal={teamScore ? { name: teamScore.guest, sets: teamScore.guestScore, legs: teamScore.guestLegs } : null}
                     {overlaySizes}
                     bind:containerElement={container2}
                     bind:boardKey={cam2BoardKey}
@@ -676,15 +678,6 @@
                 />
             </div>
 
-            {#if teamScore}
-                <div class="team-score-strip" class:stale={scoringStatus !== 'live'} aria-live="polite">
-                    <span class="team-name" title={teamScore.home}>{teamScore.home}</span>
-                    <span class="team-result" aria-label="Teamstand {teamScore.home} {teamScore.homeScore} zu {teamScore.guestScore} {teamScore.guest}">
-                        <strong>{teamScore.homeScore}</strong><span>:</span><strong>{teamScore.guestScore}</strong>
-                    </span>
-                    <span class="team-name guest" title={teamScore.guest}>{teamScore.guest}</span>
-                </div>
-            {/if}
         </div>
 
         {#if showIframe}
@@ -1073,51 +1066,6 @@
         gap: var(--camera-gap);
         min-height: 0;
         transition: gap 200ms ease;
-    }
-
-    .team-score-strip {
-        display: grid;
-        flex: none;
-        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-        align-items: center;
-        gap: var(--space-3);
-        min-height: 48px;
-        margin-top: var(--space-1);
-        padding: 4px var(--space-3);
-        border: 1px solid var(--color-border);
-        border-top: 2px solid var(--color-brand);
-        border-radius: var(--radius-sm);
-        background: var(--color-surface);
-        color: var(--color-text);
-    }
-
-    .team-score-strip.stale {
-        border-top-color: var(--color-warning);
-    }
-
-    .team-name {
-        min-width: 0;
-        overflow: hidden;
-        font-size: 14px;
-        font-weight: 700;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .team-name.guest {
-        text-align: right;
-    }
-
-    .team-result {
-        display: flex;
-        align-items: baseline;
-        gap: 7px;
-        font: 600 26px/1 var(--font-display);
-        white-space: nowrap;
-    }
-
-    .team-result span {
-        color: var(--color-brand-text);
     }
 
     .resizer-horizontal,

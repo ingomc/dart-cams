@@ -70,22 +70,48 @@ test('average prefers the supplied value and otherwise matches the provider tota
     assert.equal(displayAverage(undefined), '–');
 });
 
-test('league footer uses the latest selected board and keeps hyphens in the guest team', () => {
+test('team totals use one latest selected board for both sides without adding shared totals', () => {
     const fixture = 'Heim A - Gast - Club (Liga A)';
     const older = {
         ...match(1, 'board-1'), typ: 'LIGA', groupName: fixture,
-        setsHome: 4, setsGuest: 3, lastUpdate: '2026-09-24T20:00:00Z',
+        setsHome: 4, setsGuest: 3, legsHome: 15, legsGuest: 12, lastUpdate: '2026-09-24T20:00:00Z',
     };
     const newer = {
         ...match(2, 'board-2'), typ: 'LIGA', groupName: fixture,
-        setsHome: 5, setsGuest: 3, lastUpdate: '2026-09-24T20:01:00Z',
+        setsHome: 5, setsGuest: 3, legsHome: 18, legsGuest: 14, lastUpdate: '2026-09-24T20:01:00Z',
     };
-    assert.deepEqual(teamScoreForBoards([older, newer], ['1', '2']), {
-        home: 'Heim A', guest: 'Gast - Club', homeScore: '5', guestScore: '3',
+    const expected = { home: 'Heim A', guest: 'Gast - Club', homeScore: '5', guestScore: '3', homeLegs: '18', guestLegs: '14' };
+    for (const snapshot of [[older, newer], [newer, older], [{ ...newer, board: 1 }, newer]]) {
+        assert.deepEqual(teamScoreForBoards(snapshot, ['1', '2']), expected);
+    }
+    assert.deepEqual(teamScoreForBoards([older, newer], ['1']), {
+        ...expected, homeScore: '4', homeLegs: '15', guestLegs: '12',
     });
+    assert.deepEqual(teamScoreForBoards([older, newer], ['2']), expected);
     assert.equal(teamScoreForBoards([older, newer], ['3']), null);
+    assert.equal(teamScoreForBoards([older, newer], []), null);
     assert.equal(teamScoreForBoards([{ ...newer, typ: 'TURNIER' }], ['2']), null);
+    assert.equal(teamScoreForBoards([{ ...newer, status: 4 }], ['2']), null);
     assert.equal(teamScoreForBoards([{ ...newer, setsHome: -1 }], ['2']), null);
+});
+
+test('team totals keep real zeroes and show missing or invalid legs without borrowing older values', () => {
+    const base = { ...match(1, 'league'), typ: 'LIGA', groupName: 'Heim - Gast',
+        setsHome: 0, setsGuest: 0, legsHome: 0, legsGuest: 0, lastUpdate: '2026-09-24T20:01:00Z' };
+    const zero = { home: 'Heim', guest: 'Gast', homeScore: '0', guestScore: '0', homeLegs: '0', guestLegs: '0' };
+    assert.deepEqual(teamScoreForBoards([base], ['1']), zero);
+    assert.deepEqual(teamScoreForBoards([{ ...base, legsHome: '0', legsGuest: '14' }], ['1']), { ...zero, guestLegs: '14' });
+    const older = { ...base, board: 2, legsHome: 12, legsGuest: 9, lastUpdate: '2026-09-24T20:00:00Z' };
+    for (const invalid of [undefined, null, '', 'unknown', -1, 1.5, NaN, Infinity]) {
+        assert.deepEqual(teamScoreForBoards([older, { ...base, legsHome: invalid, legsGuest: 3 }], ['1', '2']), {
+            ...zero, homeLegs: '–', guestLegs: '3',
+        });
+        assert.deepEqual(teamScoreForBoards([{ ...base, legsGuest: invalid }], ['1']), { ...zero, guestLegs: '–' });
+    }
+    for (const invalid of [undefined, -1, 1.5, NaN]) {
+        assert.equal(teamScoreForBoards([{ ...base, setsHome: invalid }], ['1']), null);
+        assert.equal(teamScoreForBoards([{ ...base, setsGuest: invalid }], ['1']), null);
+    }
 });
 
 test('switching events ignores the old request and closes its socket', async () => {

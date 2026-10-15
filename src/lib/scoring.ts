@@ -7,6 +7,8 @@ export interface TeamScore {
     guest: string;
     homeScore: string;
     guestScore: string;
+    homeLegs: string;
+    guestLegs: string;
 }
 
 export interface ScoringEvent {
@@ -96,12 +98,11 @@ export function teamScoreForBoards(matches: LiveMatch[], selectedBoards: string[
 
     let latest: LiveMatch | null = null;
     for (const match of matches) {
-        const homeScore = displayNumber(match.setsHome);
-        const guestScore = displayNumber(match.setsGuest);
+        const homeScore = displayTeamTotal(match.setsHome);
+        const guestScore = displayTeamTotal(match.setsGuest);
         if (match.status === 4 || !selected.has(boardId(match.board) ?? '') ||
             !(match.typ?.startsWith('LIGA') || match.teamParentMatchName) ||
-            homeScore === '–' || guestScore === '–' ||
-            Number(homeScore) < 0 || Number(guestScore) < 0) continue;
+            homeScore === '–' || guestScore === '–') continue;
         const updated = Date.parse(match.lastUpdate ?? '') || 0;
         const previous = Date.parse(latest?.lastUpdate ?? '') || 0;
         if (!latest || updated >= previous) latest = match;
@@ -109,9 +110,16 @@ export function teamScoreForBoards(matches: LiveMatch[], selectedBoards: string[
     if (!latest) return null;
     return {
         ...teamNames(latest),
-        homeScore: displayNumber(latest.setsHome),
-        guestScore: displayNumber(latest.setsGuest),
+        homeScore: displayTeamTotal(latest.setsHome),
+        guestScore: displayTeamTotal(latest.setsGuest),
+        homeLegs: displayTeamTotal(latest.legsHome),
+        guestLegs: displayTeamTotal(latest.legsGuest),
     };
+}
+
+function displayTeamTotal(value: unknown): string {
+    const displayed = displayNumber(value);
+    return Number.isSafeInteger(Number(displayed)) && Number(displayed) >= 0 ? displayed : '–';
 }
 
 export function upsertMatch(matches: LiveMatch[], incoming: LiveMatch): LiveMatch[] {

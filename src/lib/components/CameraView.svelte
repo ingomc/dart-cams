@@ -13,6 +13,7 @@
     import { editDraft } from "../manualEdit";
     import { defaultOverlaySizes, type OverlaySizes } from "../overlaySizes";
     import type { CameraDiagnostics } from '../cameraDiagnostics';
+    import type { CameraSettingsApply } from '../cameraLayoutSettings';
     import {
         getTransformStyle,
         getMaskStyle,
@@ -26,6 +27,8 @@
     export let selectedSource: CameraSource = { kind: 'none' };
     export let bridge: BridgeConnection = initialConnection;
     export let label: string;
+    export let logoUrl: string | null = null;
+    export let logoTeamName = '';
     export let overlaySizes: OverlaySizes = { ...defaultOverlaySizes };
     export let matches: MatchData["match"][];
     export let videoDevices: MediaDeviceInfo[] = [];
@@ -44,10 +47,21 @@
     export let videoElement: HTMLVideoElement | undefined = undefined;
     export let containerElement: HTMLElement | undefined = undefined;
 
-    const dispatch = createEventDispatcher();
+    const dispatch = createEventDispatcher<{
+        configure: void;
+        boardChange: { board: string };
+        refreshDevices: void;
+        editRequest: void;
+        editStart: void;
+        editEnd: void;
+        settingsApply: CameraSettingsApply;
+        scoreDragStart: { originalEvent: MouseEvent | TouchEvent };
+    }>();
 
     let viewportWidth = 0;
     let viewportHeight = 0;
+    let labelHeight = 0;
+    let failedLogoUrl: string | null = null;
     let scoreOverlayWidth = 0;
     let scoreOverlayHeight = 0;
     let videoWidth = 0;
@@ -82,6 +96,7 @@
         return () => clearInterval(timer);
     });
     $: selectedDeviceId = sourceKey(selectedSource);
+    $: cameraName = label.trim() || (camId === 'cam1' ? 'Heim' : 'Gast');
     $: rectified = selectedSource.kind === 'dartrectify';
     $: displayedSettings = rectified ? rectifiedSettings(draft ?? settings) : draft ?? settings;
     $: selectedMatch = boardKey ? matchForBoard(matches, boardKey) : null;
@@ -215,7 +230,7 @@
     }
 
     function applyEdit(event: CustomEvent<CamSetting>) {
-        settings = event.detail;
+        dispatch('settingsApply', { sourceKey: editingDeviceId, settings: event.detail });
         draft = null;
         editingDeviceId = '';
         dispatch('editEnd');
@@ -244,7 +259,7 @@
 <div
     class="cam-container"
     hidden={!visible}
-    style="width: {width}%; --camera-label-scale: {overlaySizes.label / 100}; --score-scale: {overlaySizes.score / 100};"
+    style="width: {width}%; --camera-label-scale: {overlaySizes.label / 100}; --camera-label-height: {labelHeight}px; --score-scale: {overlaySizes.score / 100};"
     bind:this={containerElement}
 >
     <!-- Scoreboard Overlay -->
@@ -268,25 +283,35 @@
     {/if}
 
     <BoardCelebration event={visibleCelebration} />
-    <div class="camera-heading">
-        <span>Kamera {camId === 'cam1' ? '01' : '02'}</span>
-        <button id="camera-config-trigger-{camId}" type="button" class="camera-gear"
-            aria-label="Kamera {camId === 'cam1' ? '1' : '2'} Einstellungen {configOpen ? 'schließen' : 'öffnen'}"
-            aria-controls="camera-config-{camId}" aria-expanded={configOpen}
-            on:click={() => dispatch('configure')}>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-                stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
-                <path d="M10 2h4l.5 2.2 1.7.7 1.9-1.2 2.8 2.8-1.2 1.9.7 1.7L22 10v4l-2.2.5-.7 1.7 1.2 1.9-2.8 2.8-1.9-1.2-1.7.7L14 22h-4l-.5-2.2-1.7-.7-1.9 1.2-2.8-2.8 1.2-1.9-.7-1.7L2 14v-4l2.2-.5.7-1.7-1.2-1.9 2.8-2.8 1.9 1.2 1.7-.7L10 2Z" />
-                <circle cx="12" cy="12" r="3" />
-            </svg>
-        </button>
-    </div>
+    {#if !draft}
+        <div class="camera-label-controls" class:right={camId === 'cam2'} bind:clientHeight={labelHeight}>
+            <span class="cam-label" title={cameraName}>
+                {#if logoUrl && failedLogoUrl !== logoUrl}
+                    <img class="team-logo" src={logoUrl} alt={logoTeamName} referrerpolicy="no-referrer"
+                        on:error={() => (failedLogoUrl = logoUrl)} />
+                {/if}
+                <span class="cam-label-text">{cameraName}</span>
+            </span>
+            <button id="camera-config-trigger-{camId}" type="button" class="camera-gear"
+                aria-label="{cameraName}: Einstellungen {configOpen ? 'schließen' : 'öffnen'}"
+                title="{cameraName}: Einstellungen"
+                aria-controls="camera-config-{camId}" aria-expanded={configOpen}
+                on:click={() => dispatch('configure')}>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                    stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10 2h4l.5 2.2 1.7.7 1.9-1.2 2.8 2.8-1.2 1.9.7 1.7L22 10v4l-2.2.5-.7 1.7 1.2 1.9-2.8 2.8-1.9-1.2-1.7.7L14 22h-4l-.5-2.2-1.7-.7-1.9 1.2-2.8-2.8 1.2-1.9-.7-1.7L2 14v-4l2.2-.5.7-1.7-1.2-1.9 2.8-2.8 1.9 1.2 1.7-.7L10 2Z" />
+                    <circle cx="12" cy="12" r="3" />
+                </svg>
+            </button>
+        </div>
+    {/if}
     <section id="camera-config-{camId}" class="camera-settings-panel ui-panel"
+        class:right={camId === 'cam2'}
         aria-labelledby="camera-config-title-{camId}" hidden={!configOpen || !!draft}>
         <div class="config-heading">
-            <h3 id="camera-config-title-{camId}">Kamera {camId === 'cam1' ? '01' : '02'}</h3>
+            <h3 id="camera-config-title-{camId}">{cameraName}</h3>
             <button type="button" class="config-close"
-                aria-label="Kamera {camId === 'cam1' ? '1' : '2'} Einstellungen schließen"
+                aria-label="{cameraName}: Einstellungen schließen"
                 on:click={() => dispatch('configure')}>×</button>
         </div>
         <div class="config-fields">
@@ -329,7 +354,7 @@
             <div class="empty-state" role={streamError ? 'alert' : 'status'}>
                 <span class="empty-mark" aria-hidden="true">◎</span>
                 <strong>{streamError ? 'Kamera nicht verfügbar' : 'Keine Kamera ausgewählt'}</strong>
-                <p>{streamError || 'Wähle eine Kamera über das Zahnrad oben links aus.'}</p>
+                <p>{streamError || 'Wähle eine Kamera über das Zahnrad neben dem Namen unten aus.'}</p>
                 <button type="button" class="ui-button ui-button--secondary ui-button--small"
                     on:click={() => dispatch('configure')}>Kamera einrichten</button>
             </div>
@@ -383,7 +408,6 @@
         <CameraEditor bind:draft frameWidth={viewportWidth} frameHeight={viewportHeight} media={rectified ? imageElement : videoElement} {rectified}
             on:apply={applyEdit} on:cancel={cancelEdit} />
     {/if}
-    {#if !draft}<div class="cam-label {camId === 'cam1' ? 'left' : 'right'}">{label}</div>{/if}
 </div>
 
 <style>
@@ -403,31 +427,21 @@
         display: none;
     }
 
-    .camera-heading {
+    .camera-label-controls {
         position: absolute;
         z-index: 160;
-        top: 12px;
+        bottom: 12px;
         left: 12px;
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        min-height: 30px;
-        padding: 2px 3px 2px 9px;
-        border: 1px solid rgba(255, 255, 255, 0.14);
-        border-radius: var(--radius-sm);
-        background: rgba(21, 23, 25, 0.84);
-        color: var(--color-text-secondary);
-        font: 600 12px/1.2 var(--font-display);
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        opacity: var(--controls-opacity, 1);
-        pointer-events: var(--controls-pointer-events, auto);
-        transition: opacity 200ms ease;
+        max-width: calc(100% - 24px);
     }
 
-    .camera-heading:has(:focus-visible) {
-        opacity: 1;
-        pointer-events: auto;
+    .camera-label-controls.right {
+        left: auto;
+        right: 12px;
+        flex-direction: row-reverse;
     }
 
     .empty-state .ui-button {
@@ -443,14 +457,24 @@
 
     .camera-gear {
         display: grid;
+        flex-shrink: 0;
         width: 26px;
         height: 26px;
         place-items: center;
         padding: 0;
         border: 0;
         border-radius: 4px;
-        background: transparent;
+        background: rgba(21, 23, 25, 0.88);
         color: var(--color-text-secondary);
+        opacity: var(--controls-opacity, 1);
+        pointer-events: var(--controls-pointer-events, auto);
+        transition: opacity 200ms ease;
+    }
+
+    .camera-gear:focus-visible,
+    .camera-gear[aria-expanded="true"] {
+        opacity: 1;
+        pointer-events: auto;
     }
 
     .camera-gear:hover,
@@ -462,14 +486,19 @@
     .camera-settings-panel {
         position: absolute;
         z-index: 170;
-        top: 50px;
+        bottom: calc(12px + var(--camera-label-height) + 8px);
         left: 12px;
         width: min(320px, calc(100% - 24px));
-        max-height: calc(100% - 62px);
+        max-height: max(0px, calc(100% - var(--camera-label-height) - 32px));
         overflow-y: auto;
         padding: var(--space-2) var(--space-3) var(--space-3);
         border-color: #626669;
         box-shadow: var(--shadow-panel);
+    }
+
+    .camera-settings-panel.right {
+        left: auto;
+        right: 12px;
     }
 
     .camera-settings-panel[hidden] {
@@ -485,12 +514,15 @@
     }
 
     .config-heading h3 {
+        min-width: 0;
         margin: 0;
         font: 600 16px/1.2 var(--font-display);
         text-transform: uppercase;
+        overflow-wrap: anywhere;
     }
 
     .config-close {
+        flex-shrink: 0;
         width: 28px;
         height: 28px;
         padding: 0;
@@ -597,10 +629,11 @@
     }
 
     .cam-label {
-        position: absolute;
-        z-index: 20;
-        bottom: 12px;
-        max-width: min(24ch, calc(100% - 24px));
+        display: inline-flex;
+        align-items: center;
+        gap: calc(8px * var(--camera-label-scale));
+        min-width: 0;
+        max-width: 24ch;
         overflow: hidden;
         padding: calc(5px * var(--camera-label-scale)) calc(12px * var(--camera-label-scale)) calc(6px * var(--camera-label-scale));
         border-left: calc(3px * var(--camera-label-scale)) solid var(--color-brand);
@@ -611,8 +644,18 @@
         white-space: nowrap;
     }
 
-    .cam-label.left { left: 12px; }
-    .cam-label.right { right: 12px; }
+    .cam-label-text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .team-logo {
+        flex-shrink: 0;
+        width: calc(24px * var(--camera-label-scale));
+        height: calc(24px * var(--camera-label-scale));
+        object-fit: contain;
+    }
 
     .ws-message-overlay {
         position: absolute;
@@ -651,7 +694,7 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-        .camera-heading,
+        .camera-gear,
         .empty-state .ui-button { transition: none; }
     }
 </style>

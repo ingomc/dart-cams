@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from "svelte";
-	import { sourceKey, restoreSources, rectifiedSettings, type CameraSource } from '$lib/cameraSources';
+	import { sourceKey, restoreSources, type CameraSource } from '$lib/cameraSources';
+	import { restoreCameraSettings, ensureCameraProfiles, cameraSettingsFor, applyCameraSettings, type CameraLayout, type CameraSlot, type CameraSettingsApply } from '$lib/cameraLayoutSettings';
 	import { DartRectifyDiscovery, initialConnection, connectionLabels, connectionHelp, type BridgeConnection } from '$lib/dartrectify/connection';
 	let bridge: BridgeConnection = initialConnection;
 	let discovery: DartRectifyDiscovery;
 	let sourcesRestored = false;
-	const loadingTimers: Partial<Record<'cam1' | 'cam2', ReturnType<typeof setTimeout>>> = {};
 	import SettingsSection from "$lib/components/SettingsSection.svelte";
 	let activeSettingsSection = "";
 	import CameraView from "$lib/components/CameraView.svelte";
@@ -14,10 +14,11 @@
 	import { defaultCamSettings } from "$lib/constants";
 	import { LiveScoringClient, type ScoringStatus } from "$lib/liveScoring";
 	import { listBoards, parseScoringEventUrl, teamScoreForBoards, type LiveMatch } from "$lib/scoring";
-	import type { CamSettings, CamSetting } from "$lib/types";
+	import type { CamSettings } from "$lib/types";
 	import type { ScoringCelebration } from "$lib/scoringCelebration";
 	import { restoreOverlaySizes } from "$lib/overlaySizes";
 	import { CameraDiagnostics } from '$lib/cameraDiagnostics';
+	import { AutoScoringClient, restoreAutoScoringContext, restoreBoardSelection, assignAvailableBoards, serializeBoardSelection, type AutoScoringContext, type AutoScoringStatus } from '$lib/autoScoring';
 
 	const cameraDiagnostics = new CameraDiagnostics();
 	let diagnosticCount = 0;
@@ -70,6 +71,47 @@
 	let matches: LiveMatch[] = [];
 	let scoringClient: LiveScoringClient | null = null;
 	let activeEventKey = "";
+	let automaticScoring = true;
+	let autoScoringStatus: AutoScoringStatus = 'loading';
+	let autoScoringContext: AutoScoringContext | null = null;
+	let autoScoringClient: AutoScoringClient | null = null;
+	let pendingBoardAssignment = { cam1: false, cam2: false };
+	$: selectedFixture = autoScoringContext?.fixture?.liveUrl === scoringUrl ? autoScoringContext.fixture : null;
+	$: automaticScoringNotice = autoScoringStatus === 'error' ? scoringUrl
+		? 'Spielauswahl nicht erreichbar – zuletzt verbundener Event bleibt aktiv.' : 'Spielauswahl nicht erreichbar. Erneut laden oder manuell verbinden.' :
+		autoScoringStatus === 'stale' ? 'Spielauswahl nicht aktualisiert – letzter gespeicherter Stand.' : '';
+
+	function fixtureDate(value: string): string {
+		return new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+	}
+
+	function toggleAutomaticScoring(event: Event): void {
+		automaticScoring = (event.currentTarget as HTMLInputElement).checked;
+		localStorage.setItem('dartScoringAutomatic', String(automaticScoring));
+		if (automaticScoring) {
+			autoScoringClient?.start(autoScoringContext ?? restoreAutoScoringContext(localStorage.getItem('dartScoringAutoContext')));
+		} else {
+			autoScoringClient?.stop();
+			autoScoringStatus = 'ready';
+			if (!scoringUrl) {
+				const saved = localStorage.getItem('dartScoringEventUrl');
+				if (saved) activateScoringUrl(saved);
+			}
+		}
+	}
+
+	function receiveMatches(next: LiveMatch[]): void {
+		matches = next;
+		if (!automaticScoring || autoScoringContext?.fixture?.liveUrl !== scoringUrl) return;
+		const selection = assignAvailableBoards(next, {
+			boards: { cam1: cam1BoardKey, cam2: cam2BoardKey }, pending: pendingBoardAssignment,
+		});
+		if (selection.boards.cam1 === cam1BoardKey && selection.boards.cam2 === cam2BoardKey) return;
+		cam1BoardKey = selection.boards.cam1;
+		cam2BoardKey = selection.boards.cam2;
+		pendingBoardAssignment = selection.pending;
+		saveBoardSelection();
+	}
 
 	let container1: HTMLElement;
 	let container2: HTMLElement;
@@ -81,7 +123,6 @@
 		{ value: 'cam1', label: 'Nur Kamera 1' },
 		{ value: 'cam2', label: 'Nur Kamera 2' },
 	] as const;
-	type CameraLayout = (typeof cameraLayoutPresets)[number]['value'];
 	let cameraLayout: CameraLayout = 'split';
 	let topHeight = 70; // in % when the live view is open
 	let leftWidth = 50; // in %
@@ -102,8 +143,7 @@
 		cam2: { ...defaultCamSettings },
 	};
 
-	let savedSettings: Record<string, CamSetting> = {};
-	let isLoadingSettings = { cam1: false, cam2: false };
+	let cameraSettingsStore = restoreCameraSettings(null, null);
 
 	let editingCam: "cam1" | "cam2" | null = null;
 
@@ -131,7 +171,10 @@
 		offline: 'Verbindung unterbrochen – letzter Stand',
 		error: 'Scoring derzeit nicht erreichbar',
 	};
-	$: scoringStatusLabel = scoringStatusText[scoringStatus] + (scoringUrl && matches.length
+	$: scoringStatusLabel = (automaticScoring && !scoringUrl
+		? autoScoringStatus === 'loading' ? 'Spiel wird gesucht…' : autoScoringStatus === 'error' ? 'Spielauswahl nicht verfügbar' : 'Kein anstehendes Spiel'
+		: selectedFixture && !matches.length && (scoringStatus === 'live' || scoringStatus === 'connecting')
+			? 'Warte auf Live-Scoring' : scoringStatusText[scoringStatus]) + (scoringUrl && matches.length
 		? ' · ' + matches.length + (matches.length === 1 ? ' Match' : ' Matches') : '');
 	$: controlsBusy = settingsOpen || activeCameraSettings !== null || editingCam !== null ||
 		webcamInteracting || isDraggingVertical || isDraggingHorizontal || isDraggingScore1 || isDraggingScore2;
@@ -222,31 +265,29 @@
 	}
 
 	function updateBoard(slot: 'cam1' | 'cam2', board: string): void {
+		pendingBoardAssignment[slot] = false;
 		if (slot === 'cam1') { cam1Celebration = null; cam1BoardKey = board; }
 		else { cam2Celebration = null; cam2BoardKey = board; }
 		saveBoardSelection();
 	}
 
-	function activateScoringUrl(value: string): void {
+	function activateScoringUrl(value: string, keepCurrent = false): void {
 		const event = parseScoringEventUrl(value);
 		if (!event) {
 			scoringError = 'Bitte einen 3K-Live-Link im Format https://live.3k-darts.com/event/5/2995582 eingeben.';
 			return;
 		}
 		scoringError = '';
+		if (keepCurrent && activeEventKey === event.key) return;
 		cam1Celebration = null;
 		cam2Celebration = null;
 		scoringUrl = event.url;
 		scoringUrlDraft = event.url;
 		activeEventKey = event.key;
-		try {
-			const stored = JSON.parse(localStorage.getItem(`dartScoringBoards:${event.key}`) ?? '{}');
-			cam1BoardKey = typeof stored.cam1 === 'string' ? stored.cam1 : '';
-			cam2BoardKey = typeof stored.cam2 === 'string' ? stored.cam2 : '';
-		} catch {
-			cam1BoardKey = '';
-			cam2BoardKey = '';
-		}
+		const selection = restoreBoardSelection(localStorage.getItem(`dartScoringBoards:${event.key}`), automaticScoring);
+		cam1BoardKey = selection.boards.cam1;
+		cam2BoardKey = selection.boards.cam2;
+		pendingBoardAssignment = selection.pending;
 		localStorage.setItem('dartScoringEventUrl', event.url);
 		scoringClient?.start(event);
 	}
@@ -254,7 +295,7 @@
 	function saveBoardSelection(): void {
 		if (!activeEventKey) return;
 		localStorage.setItem(`dartScoringBoards:${activeEventKey}`,
-			JSON.stringify({ cam1: cam1BoardKey, cam2: cam2BoardKey }));
+			serializeBoardSelection({ boards: { cam1: cam1BoardKey, cam2: cam2BoardKey }, pending: pendingBoardAssignment }));
 	}
 
 	// Drag Logic for Scoreboards
@@ -315,23 +356,45 @@
 		window.addEventListener('keydown', revealControls, true);
 		window.addEventListener('focusin', revealControls, true);
 		scoringClient = new LiveScoringClient({
-			onMatches: (next) => (matches = next),
+			onMatches: receiveMatches,
 			onStatus: (next) => (scoringStatus = next),
 			onCelebration: (event) => {
 				if (event.board === cam1BoardKey && editingCam !== 'cam1') cam1Celebration = event;
 				if (event.board === cam2BoardKey && editingCam !== 'cam2') cam2Celebration = event;
 			},
 		});
-		const savedScoringUrl = localStorage.getItem('dartScoringEventUrl');
-		if (savedScoringUrl) activateScoringUrl(savedScoringUrl);
-		const saved = localStorage.getItem("dartCamSettings");
-		if (saved) {
-			try {
-				savedSettings = JSON.parse(saved);
-			} catch (e) {
-				console.error("Failed to parse saved settings", e);
-			}
+		autoScoringClient = new AutoScoringClient({
+			onContext: (context) => {
+				autoScoringContext = context;
+				try { localStorage.setItem('dartScoringAutoContext', JSON.stringify(context)); } catch { /* Keep the current session usable without persistent storage. */ }
+				if (context.fixture) activateScoringUrl(context.fixture.liveUrl, true);
+				else {
+					scoringClient?.stop();
+					scoringUrl = ''; scoringUrlDraft = ''; activeEventKey = '';
+					cam1BoardKey = ''; cam2BoardKey = '';
+					pendingBoardAssignment = { cam1: false, cam2: false };
+				}
+			},
+			onStatus: (status) => {
+				autoScoringStatus = status;
+				if (status === 'error' && !scoringUrl) {
+					const saved = localStorage.getItem('dartScoringEventUrl');
+					if (saved && parseScoringEventUrl(saved)) activateScoringUrl(saved);
+				}
+			},
+		}, { endpoint: import.meta.env.VITE_DARTCAMS_CONTEXT_URL || undefined });
+		automaticScoring = localStorage.getItem('dartScoringAutomatic') !== 'false';
+		if (automaticScoring) {
+			autoScoringClient.start(restoreAutoScoringContext(localStorage.getItem('dartScoringAutoContext')));
+		} else {
+			autoScoringStatus = 'ready';
+			const savedScoringUrl = localStorage.getItem('dartScoringEventUrl');
+			if (savedScoringUrl) activateScoringUrl(savedScoringUrl);
 		}
+		cameraSettingsStore = restoreCameraSettings(
+			localStorage.getItem('dartCamSettings'), localStorage.getItem('dartCamLayoutSettings'),
+		);
+		localStorage.setItem('dartCamLayoutSettings', JSON.stringify(cameraSettingsStore.layouts));
 
 		const savedLabels = localStorage.getItem("dartCamLabels");
 		if (savedLabels) {
@@ -380,7 +443,7 @@
 		controlsMounted = false;
 		if (controlsTimer !== null) clearTimeout(controlsTimer);
 		scoringClient?.stop();
-		Object.values(loadingTimers).forEach(clearTimeout);
+		autoScoringClient?.stop();
 		discovery?.stop();
 		if (typeof window !== "undefined") {
 			window.removeEventListener('pointermove', revealControls);
@@ -467,45 +530,25 @@
 		isDraggingHorizontal = false;
 	}
 
-	function loadSettings(slot: "cam1" | "cam2", deviceId: string) {
-		if (!deviceId) return;
-		clearTimeout(loadingTimers[slot]);
-		isLoadingSettings[slot] = true;
-
-		const stored = savedSettings[deviceId] ?? (deviceId.startsWith('webcam:') ? savedSettings[deviceId.slice(7)] : undefined);
-		if (stored) {
-			console.log(`Loading settings for ${slot} (${deviceId})`);
-			camSettings[slot] = {
-				...defaultCamSettings,
-				...stored,
-			};
-		} else {
-			console.log(
-				`No saved settings for ${slot} (${deviceId}), using defaults`,
-			);
-			camSettings[slot] = { ...defaultCamSettings };
+	function loadSettings(slot: CameraSlot, deviceId: string, layout: CameraLayout): void {
+		if (ensureCameraProfiles(cameraSettingsStore, slot, deviceId)) {
+			localStorage.setItem('dartCamLayoutSettings', JSON.stringify(cameraSettingsStore.layouts));
 		}
-
-		if (deviceId.startsWith('dartrectify:')) camSettings[slot] = rectifiedSettings(camSettings[slot]);
-		loadingTimers[slot] = setTimeout(() => {
-			isLoadingSettings[slot] = false;
-		}, 100);
+		camSettings[slot] = cameraSettingsFor(cameraSettingsStore, layout, slot, deviceId);
 	}
 
-	function saveSettings(
-		slot: "cam1" | "cam2",
-		deviceId: string,
-		settings: CamSetting,
-	) {
-		if (!deviceId || isLoadingSettings[slot]) return;
-		savedSettings[deviceId] = { ...settings };
-		localStorage.setItem("dartCamSettings", JSON.stringify(savedSettings));
+	function saveCameraSettings(slot: CameraSlot, change: CameraSettingsApply): void {
+		if (editingCam !== slot || change.sourceKey !== sourceKey(slot === 'cam1' ? selectedCam1 : selectedCam2)) return;
+		applyCameraSettings(cameraSettingsStore, cameraLayout, slot, change);
+		localStorage.setItem('dartCamSettings', JSON.stringify(cameraSettingsStore.sources));
+		localStorage.setItem('dartCamLayoutSettings', JSON.stringify(cameraSettingsStore.layouts));
+		// The same source may be shown in both slots; shared color/calibration changes apply to both.
+		loadSettings('cam1', sourceKey(selectedCam1), cameraLayout);
+		loadSettings('cam2', sourceKey(selectedCam2), cameraLayout);
 	}
 
-	$: if (sourcesRestored && sourceKey(selectedCam1)) loadSettings('cam1', sourceKey(selectedCam1));
-	$: if (sourcesRestored && sourceKey(selectedCam2)) loadSettings('cam2', sourceKey(selectedCam2));
-	$: if (sourcesRestored && sourceKey(selectedCam1) && camSettings.cam1) saveSettings('cam1', sourceKey(selectedCam1), camSettings.cam1);
-	$: if (sourcesRestored && sourceKey(selectedCam2) && camSettings.cam2) saveSettings('cam2', sourceKey(selectedCam2), camSettings.cam2);
+	$: if (sourcesRestored) loadSettings('cam1', sourceKey(selectedCam1), cameraLayout);
+	$: if (sourcesRestored) loadSettings('cam2', sourceKey(selectedCam2), cameraLayout);
 	$: if (overlaySizesRestored) localStorage.setItem('dartCamOverlaySizes', JSON.stringify(overlaySizes));
 
 	$: {
@@ -554,11 +597,13 @@
                     camId="cam1"
                     width={cameraLayout === 'cam1' ? 100 : leftWidth}
                     visible={cameraLayout !== 'cam2'}
-                    bind:settings={camSettings.cam1}
+                    settings={camSettings.cam1}
                     editLocked={editingCam !== null}
                     {bridge}
                     bind:selectedSource={selectedCam1}
                     bind:label={cam1Label}
+                    logoUrl={selectedFixture?.home.logoUrl ?? null}
+                    logoTeamName={selectedFixture?.home.name ?? ''}
                     {overlaySizes}
                     bind:containerElement={container1}
                     bind:boardKey={cam1BoardKey}
@@ -578,6 +623,7 @@
                     on:editRequest={() => beginCameraEdit('cam1')}
                     on:editStart={() => (editingCam = "cam1")}
                     on:editEnd={finishCameraEdit}
+                    on:settingsApply={(event) => saveCameraSettings('cam1', event.detail)}
                     on:scoreDragStart={(event) => startScoreDrag(1, event.detail.originalEvent)}
                 />
 
@@ -599,11 +645,13 @@
                     camId="cam2"
                     width={cameraLayout === 'cam2' ? 100 : 100 - leftWidth}
                     visible={cameraLayout !== 'cam1'}
-                    bind:settings={camSettings.cam2}
+                    settings={camSettings.cam2}
                     editLocked={editingCam !== null}
                     {bridge}
                     bind:selectedSource={selectedCam2}
                     bind:label={cam2Label}
+                    logoUrl={selectedFixture?.guest.logoUrl ?? null}
+                    logoTeamName={selectedFixture?.guest.name ?? ''}
                     {overlaySizes}
                     bind:containerElement={container2}
                     bind:boardKey={cam2BoardKey}
@@ -623,6 +671,7 @@
                     on:editRequest={() => beginCameraEdit('cam2')}
                     on:editStart={() => (editingCam = "cam2")}
                     on:editEnd={finishCameraEdit}
+                    on:settingsApply={(event) => saveCameraSettings('cam2', event.detail)}
                     on:scoreDragStart={(event) => startScoreDrag(2, event.detail.originalEvent)}
                 />
             </div>
@@ -745,21 +794,45 @@
             </SettingsSection>
             <SettingsSection id="settings-scoring" title="Live-Scoring" icon="M4 4h16v16H4zM8 8h2M8 12h2M8 16h2M14 8h2M14 12h2M14 16h2" bind:active={activeSettingsSection}>
                 <div class="settings-section-body">
-                    <form class="settings-form" on:submit|preventDefault={() => activateScoringUrl(scoringUrlDraft)}>
+                    <label class="settings-switch">
+                        <span>Spiel automatisch aus Fülltreffer</span>
+                        <input type="checkbox" role="switch" checked={automaticScoring} on:change={toggleAutomaticScoring} />
+                        <span class="switch-track" aria-hidden="true"></span>
+                    </label>
+                    {#if automaticScoring}
+                        <div class="fixture-summary" aria-live="polite">
+                            <div>
+                                {#if autoScoringContext?.fixture}
+                                    <strong>{autoScoringContext.fixture.home.name} · {autoScoringContext.fixture.guest.name}</strong>
+                                    <span>{autoScoringContext.fixture.roundName} · {fixtureDate(autoScoringContext.fixture.datePlanned)}</span>
+                                {:else}
+                                    <span>{autoScoringStatus === 'loading' ? 'Spiel wird gesucht…' : autoScoringStatus === 'error' ? 'Spielauswahl nicht verfügbar' : 'Kein anstehendes Spiel'}</span>
+                                {/if}
+                            </div>
+                            <button type="button" class="ui-icon-button" aria-label="Spielauswahl aktualisieren" title="Spielauswahl aktualisieren"
+                                disabled={autoScoringStatus === 'loading'} on:click={() => autoScoringClient?.refresh(true)}>
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                                    <path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 3l1 3M4 12l1 3a8 8 0 0 0 13 3" />
+                                </svg>
+                            </button>
+                        </div>
+                        {#if automaticScoringNotice}<p class="field-error" role="status">{automaticScoringNotice}</p>{/if}
+                    {/if}
+                    <form class="settings-form" on:submit|preventDefault={() => { if (!automaticScoring) activateScoringUrl(scoringUrlDraft); }}>
                         <div>
                             <label class="ui-label" for="scoring-event-url">3K-Live-Event-Link</label>
                             <div class="event-link-field">
                                 <input class="ui-field" id="scoring-event-url" type="text" inputmode="url"
-                                    bind:value={scoringUrlDraft} aria-invalid={!!scoringError}
+                                    bind:value={scoringUrlDraft} aria-invalid={!!scoringError} readonly={automaticScoring}
                                     placeholder="https://live.3k-darts.com/event/5/2995582" spellcheck="false" />
-                                {#if scoringUrlDraft}
+                                {#if scoringUrlDraft && !automaticScoring}
                                     <button type="button" class="ui-icon-button event-link-clear"
                                         aria-label="Event-Link löschen" title="Event-Link löschen"
                                         on:click={() => { scoringUrlDraft = ''; scoringError = ''; }}>×</button>
                                 {/if}
                             </div>
                         </div>
-                        <button type="submit" class="ui-button ui-button--primary">Verbinden</button>
+                        {#if !automaticScoring}<button type="submit" class="ui-button ui-button--primary">Verbinden</button>{/if}
                     </form>
                     {#if scoringError}<p class="field-error" role="alert">{scoringError}</p>{/if}
                     <label class="settings-switch" class:disabled={!scoringUrl}>
@@ -1204,6 +1277,28 @@
         color: var(--color-text-secondary);
         font-size: 12px;
     }
+
+    .fixture-summary {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding: var(--space-2);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-sm);
+        background: var(--color-background);
+    }
+
+    .fixture-summary > div {
+        display: grid;
+        flex: 1;
+        gap: var(--space-1);
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    .fixture-summary strong { font-size: 13px; }
+    .fixture-summary span { color: var(--color-text-secondary); font-size: 12px; }
+    .fixture-summary .ui-icon-button { flex: none; }
 
     .settings-form,
     .iframe-settings {

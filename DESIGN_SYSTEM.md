@@ -31,7 +31,9 @@ Alle interaktiven Elemente erhalten sichtbare Fokuszustände. Deaktivierte Aktio
 
 ## Anwendung in der Kameraansicht
 
-Die Broadcast-Fläche priorisiert die zwei Kameras. Pro ausgewähltem Board sitzt ein kompaktes Zwei-Zeilen-Scoring oben rechts; die Spielerzeilen zeigen Darts, letzte Aufnahme und Restscore. Bei Liga-Events zeigt eine schmale Leiste unter beiden Kameras den Teamstand. Sie nutzt die jüngste Aktualisierung der ausgewählten Boards und kennzeichnet einen unterbrochenen Feed durch die Warnfarbe. Das Zahnrad neben „Kamera 01/02“ öffnet direkt im jeweiligen Kamerabild Quelle, Bezeichnung, Boardzuweisung und Bildeditor. Die 40 Pixel hohe App-Leiste sitzt am unteren Rand. Rechts stehen die Status-Pills für DartRectify und Live-Scoring nebeneinander, gefolgt von den 28 Pixel hohen Buttons „DartRectify verbinden“ (nur ohne Verbindung) und Einstellungen (Icon mit Beschriftung für Screenreader und Tooltip). Das allgemeine Einstellungen-Panel öffnet darüber; Verbindungshinweise erscheinen oberhalb der unteren Leiste. Die optionale 3K-Ansicht bleibt unter den Kameras und lässt sich weiter in der Höhe verändern. Der Inhalt des externen 3K-Iframes kann von der App nicht gestaltet werden; nur dessen Rahmen und die eigenen Steuerelemente folgen dem Design-System.
+Die Broadcast-Fläche priorisiert die zwei Kameras. Pro ausgewähltem Board sitzt ein kompaktes Zwei-Zeilen-Scoring oben rechts; die Spielerzeilen zeigen Darts, letzte Aufnahme und Restscore. Bei Liga-Events zeigt eine schmale Leiste unter beiden Kameras den Teamstand. Sie nutzt die jüngste Aktualisierung der ausgewählten Boards und kennzeichnet einen unterbrochenen Feed durch die Warnfarbe. Die 40 Pixel hohe App-Leiste sitzt am unteren Rand. Rechts stehen die Status-Pills für DartRectify und Live-Scoring nebeneinander, gefolgt von den 28 Pixel hohen Buttons „DartRectify verbinden“ (nur ohne Verbindung) und Einstellungen (Icon mit Beschriftung für Screenreader und Tooltip). Das allgemeine Einstellungen-Panel öffnet darüber; Verbindungshinweise erscheinen oberhalb der unteren Leiste. Die optionale 3K-Ansicht bleibt unter den Kameras und lässt sich weiter in der Höhe verändern. Der Inhalt des externen 3K-Iframes kann von der App nicht gestaltet werden; nur dessen Rahmen und die eigenen Steuerelemente folgen dem Design-System.
+
+Je ein kompaktes Zahnrad neben dem unteren Kameranamen öffnet Quelle, Bezeichnung, Boardzuweisung und Bildeditor. Zusätzliche Kamera-Überschriften entfallen. Das Menü sitzt mit 8 Pixeln Abstand oberhalb des Labels, bei Heim links und bei Gast rechts. Seine verfügbare Höhe berücksichtigt die tatsächliche Labelhöhe; lange Menüs scrollen. Menütitel, Tooltip und zugängliche Button-Beschriftung verwenden den Kameranamen, bei leerer Bezeichnung „Heim“ beziehungsweise „Gast“. Escape und Schließen stellen den Fokus auf das zugehörige Zahnrad zurück. Nur das Zahnrad blendet bei Inaktivität aus; das Label bleibt sichtbar.
 
 Das zugewiesene Live-Scoring bleibt auch bei geöffneten Kameraeinstellungen an seiner Position sichtbar und reagiert sofort auf die Boardauswahl. Das Einstellungen-Panel darf den Score überdecken.
 
@@ -48,6 +50,27 @@ Nach 20 Sekunden ohne Maus- oder Tastaturaktivität blenden App-Leiste, Kamera-Z
 In den allgemeinen Einstellungen rechts unten gibt es unter „Einblendungen“ genau zwei Regler: einen für alle Kamera-Labels und einen für das gesamte Live-Scoring beider Kameras (50–200%, Standard 100%). Alle Schriften und Abstände im Scoring skalieren gemeinsam; die Änderungen erscheinen sofort. Namensbreiten nutzen `ch` (Spielernamen bis 12ch, Kamera-Labels bis 24ch) und werden durch die Kamerabreite begrenzt. Verschobene Scoreboards bleiben beim Vergrößern innerhalb des Kamerabilds. „Größen zurücksetzen“ stellt die ursprünglichen Größen wieder her. Die globalen Werte werden unabhängig von Kameraquelle und Event unter `dartCamOverlaySizes` gespeichert; bestehende Speicherkeys bleiben erhalten. Standardwerte und Grenzen stehen in `src/lib/overlaySizes.ts`.
 
 Desktop ist die Zielplattform (ab 1024 Pixel Breite). Für neue Bedienelemente zuerst die vorhandenen Tokens und Klassen verwenden; lokale CSS-Werte nur für die besondere Geometrie eines Bausteins ergänzen.
+
+## Automatische Spielauswahl und Vereinslogos
+
+Unter „Live-Scoring“ ist „Spiel automatisch aus Fülltreffer“ standardmäßig aktiv. Beim Start wird das aktuelle beziehungsweise nächste SCO-Spiel ausgewählt und dessen 3K-Link übernommen. Die kompakte Spielkarte zeigt Paarung, Spieltag und Datum; der Aktualisieren-Button wählt bei Bedarf erneut. Minütliche Hintergrundabfragen behalten das ausgewählte Spiel samt Endstand bei. Ohne Live-Daten lautet der Status „Warte auf Live-Scoring“. Boardzuweisungen werden für noch nicht konfigurierte Plätze automatisch ergänzt, sobald Boards verfügbar sind; gespeicherte Auswahlen einschließlich bewusst ausgeblendeter Scores bleiben erhalten.
+
+Der automatische Link ist schreibgeschützt. Wird der Switch ausgeschaltet, stehen Texteingabe, Löschen-Kreuz und „Verbinden“ wieder zur Verfügung. Ein Ausfall der Spielauswahl unterbricht bestehendes Scoring nicht; bei einem Neustart wird der letzte bekannte Kontext beziehungsweise Event verwendet und in den Einstellungen als Ersatzstand kenntlich gemacht. `dartScoringAutomatic` speichert den Modus, `dartScoringAutoContext` den validierten Kontext; `dartScoringEventUrl` und `dartScoringBoards:<event>` bleiben bestehen.
+
+Fülltreffer liefert ausschließlich Spielmetadaten und absolute Logo-Adressen. Logo-Pflege bleibt in Dartstory; die Zuordnung erfolgt über 3K-Teilnehmer-IDs. Vor Heim/Gast erscheint das passende Logo mit 24 Pixeln Grundgröße, proportional zur globalen Labelgröße. Das Bild wird vollständig und unverzerrt dargestellt. Fehlende oder nicht ladbare Logos entfallen ohne Platzhalter; Kameranamen und ihre Bearbeitung bleiben unverändert. Logo und Label bleiben auch bei ausgeblendeten Controls sichtbar.
+
+## Bildprofile und Speicherung
+
+Der Start erfolgt mit beiden Boards. Die drei Layout-Presets verwenden getrennte Bildprofile; eine manuell verschobene Zweiteilung bleibt im Profil `split`. Der Bildeditor zeigt zunächst einen Entwurf. Erst „Übernehmen“ speichert ihn über das typisierte `settingsApply`-Ereignis von `CameraView`; Abbrechen und Escape verwerfen ihn.
+
+| Speicher | Geltungsbereich | Bildwerte |
+| --- | --- | --- |
+| `dartCamLayoutSettings`, Version 1 | Layout (`split`, `cam1`, `cam2`), Kameraplatz und Quelle | Maskenstatus, Radius, weiche Kante, Zoom, Position, Drehung, Achsenskalierung und manuelle Perspektivkorrekturen |
+| `dartCamSettings` | Kameraquelle, gemeinsam für alle Layouts und Kameraplätze | Helligkeit, Kontrast, Sättigung, Schärfe und automatische Scheibenkalibrierung |
+
+Beim ersten Laden werden vorhandene Bildwerte unabhängig in alle drei Layouts und beide Kameraplätze übernommen. Die alten Geometriewerte im Quellenspeicher bleiben als Migrationsbasis erhalten. Neu ausgewählte Quellen erhalten ebenfalls alle drei Profile vor der ersten Änderung. Ein Layout- oder Quellenwechsel kombiniert das entsprechende Bildprofil mit den gemeinsamen Quellwerten. Bereits entzerrte DartRectify-Bilder behalten ihre Einschränkungen für Perspektive, Achsenskalierung und automatische Kalibrierung.
+
+Kameraquellen, Bezeichnungen, Boardzuweisungen und globale Schriftgrößen behalten ihre bisherigen Speicher und gelten unabhängig vom Bildprofil. Während einer Bildbearbeitung sind die Layout-Buttons gesperrt.
 
 ## Bewegung
 

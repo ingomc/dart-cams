@@ -17,6 +17,31 @@
 	import type { CamSettings, CamSetting } from "$lib/types";
 	import type { ScoringCelebration } from "$lib/scoringCelebration";
 	import { restoreOverlaySizes } from "$lib/overlaySizes";
+	import { CameraDiagnostics } from '$lib/cameraDiagnostics';
+
+	const cameraDiagnostics = new CameraDiagnostics();
+	let diagnosticCount = 0;
+	let diagnosticStorageAvailable = true;
+	let unsubscribeDiagnostics: (() => void) | undefined;
+	let diagnosticPruneTimer: ReturnType<typeof setInterval> | undefined;
+	const handleVisibilityChange = () => cameraDiagnostics.record('app', 'tab_visibility', { visible: !document.hidden });
+
+	function downloadCameraDiagnostics(): void {
+		const data = {
+			...cameraDiagnostics.exportData(),
+			browser: navigator.userAgent,
+			secureContext: window.isSecureContext
+		};
+		const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement('a');
+		link.href = url;
+		link.download = `sco-dartcams-kamera-log-${data.exportedAt.replace(/[:.]/g, '-')}.json`;
+		document.body.appendChild(link);
+		link.click();
+		link.remove();
+		setTimeout(() => URL.revokeObjectURL(url), 1000);
+	}
 
 	// Zustand für verfügbare Geräte und ausgewählte IDs
 	let videoDevices: MediaDeviceInfo[] = [];
@@ -277,6 +302,13 @@
 	}
 
 	onMount(() => {
+		unsubscribeDiagnostics = cameraDiagnostics.subscribe(() => {
+			diagnosticCount = cameraDiagnostics.snapshot().length;
+			diagnosticStorageAvailable = cameraDiagnostics.storageAvailable;
+		});
+		cameraDiagnostics.record('app', 'app_opened');
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		diagnosticPruneTimer = setInterval(() => { diagnosticCount = cameraDiagnostics.snapshot().length; }, 30_000);
 		controlsMounted = true;
 		window.addEventListener('pointermove', revealControls, { passive: true });
 		window.addEventListener('pointerdown', revealControls, true);
@@ -317,7 +349,14 @@
 
 		const sources = restoreSources(localStorage.getItem('dartCamSources'), localStorage.getItem('dartCamSelections'));
 		selectedCam1 = sources.cam1; selectedCam2 = sources.cam2; sourcesRestored = true;
-		discovery = new DartRectifyDiscovery((connection) => bridge = connection); discovery.start();
+		discovery = new DartRectifyDiscovery((connection) => {
+			cameraDiagnostics.record('app', 'dartrectify_connection', {
+				status: connection.status,
+				sessionChanged: !!bridge.token && !!connection.token && bridge.token !== connection.token
+			});
+			bridge = connection;
+		}, (event, details) => cameraDiagnostics.record('app', event, details));
+		discovery.start();
 		getDevices();
 		navigator.mediaDevices?.addEventListener("devicechange", refreshKnownDevices);
 
@@ -335,6 +374,9 @@
 	});
 
 	onDestroy(() => {
+		unsubscribeDiagnostics?.();
+		if (diagnosticPruneTimer) clearInterval(diagnosticPruneTimer);
+		if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', handleVisibilityChange);
 		controlsMounted = false;
 		if (controlsTimer !== null) clearTimeout(controlsTimer);
 		scoringClient?.stop();
@@ -358,10 +400,14 @@
 		}
 	});
 
-	function refreshKnownDevices() { void getDevices(); }
+	function refreshKnownDevices() {
+		cameraDiagnostics.record('app', 'device_list_changed');
+		void getDevices();
+	}
 	async function getDevices(requestPermission = false) {
 		if (checkingCameras) return;
 		checkingCameras = true; cameraError = '';
+		cameraDiagnostics.record('app', 'device_scan_started', { reason: requestPermission ? 'user_refresh' : 'automatic' });
 		let permissionStream: MediaStream | null = null;
 		try {
 			if (!navigator.mediaDevices) throw new Error('Kamera-API nicht verfügbar');
@@ -371,8 +417,10 @@
 				devices = await navigator.mediaDevices.enumerateDevices();
 			}
 			videoDevices = devices.filter(d => d.kind === 'videoinput');
+			cameraDiagnostics.record('app', 'device_scan_finished', { cameraCount: videoDevices.length });
 			if (requestPermission && !videoDevices.length) cameraError = 'Keine Webcam gefunden. Anschluss und Browserberechtigung prüfen.';
-		} catch {
+		} catch (error) {
+			cameraDiagnostics.record('app', 'device_scan_failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
 			if (requestPermission) cameraError = 'Webcam-Zugriff nicht möglich. Berechtigung prüfen oder das Gerät in DartRectify freigeben.';
 		} finally { permissionStream?.getTracks().forEach(track => track.stop()); checkingCameras = false; }
 	}
@@ -520,6 +568,7 @@
                     {videoDevices}
                     availableBoards={cam1Boards}
                     {checkingCameras}
+                    {cameraDiagnostics}
                     configOpen={activeCameraSettings === 'cam1'}
                     scoringStatus={scoringStatus}
                     {matches}
@@ -564,6 +613,7 @@
                     {videoDevices}
                     availableBoards={cam2Boards}
                     {checkingCameras}
+                    {cameraDiagnostics}
                     configOpen={activeCameraSettings === 'cam2'}
                     scoringStatus={scoringStatus}
                     {matches}
@@ -603,7 +653,7 @@
 
         <IframeSection {scoringUrl} {cropTop} {cropBottom} {iframeZoom}
             bind:showFloatingWebcam {showIframe} {videoDevices}
-            {checkingCameras} {cameraError}
+            {checkingCameras} {cameraError} {cameraDiagnostics}
             on:refreshDevices={(event) => getDevices(event.detail.requestPermission)}
             on:interaction={(event) => webcamInteracting = event.detail.active}>
             <div slot="overlay">
@@ -728,6 +778,17 @@
                                 bind:value={iframeZoom} />
                         </div>
                     {/if}
+                </div>
+            </SettingsSection>
+            <SettingsSection id="settings-diagnostics" title="Kamera-Diagnose" icon="M3 12h4l2-5 4 10 2-5h6M3 20h18" bind:active={activeSettingsSection}>
+                <div class="settings-section-body">
+                    <p class="diagnostic-summary">{diagnosticCount} Ereignisse aus den letzten 10 Minuten</p>
+                    {#if !diagnosticStorageAvailable}
+                        <p class="diagnostic-summary" role="status">Der Browser speichert das Protokoll nur bis zum Neuladen.</p>
+                    {/if}
+                    <button type="button" class="ui-button ui-button--secondary" on:click={downloadCameraDiagnostics}>
+                        Kamera-Protokoll herunterladen
+                    </button>
                 </div>
             </SettingsSection>
             <button type="button" class="ui-button ui-button--secondary" aria-pressed={showFloatingWebcam}
@@ -1136,6 +1197,12 @@
         display: grid;
         gap: var(--space-2);
         padding: 12px;
+    }
+
+    .diagnostic-summary {
+        margin: 0;
+        color: var(--color-text-secondary);
+        font-size: 12px;
     }
 
     .settings-form,

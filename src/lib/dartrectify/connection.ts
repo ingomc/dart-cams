@@ -20,7 +20,10 @@ export class DartRectifyDiscovery {
     private lifetime = 0;
     private last = '';
     private permission: PermissionStatus | undefined;
-    constructor(private changed: (connection: BridgeConnection) => void) {}
+    private lastFailure = '';
+    private lastFailureAt = 0;
+    constructor(private changed: (connection: BridgeConnection) => void,
+        private diagnostic?: (event: string, details: { errorName: string; reason: string; status: string }) => void) {}
     private notify(status: BridgeConnection['status'], token = '') {
         const key = `${status}:${token}`;
         if (key !== this.last) { this.last = key; this.changed({ status, token, baseUrl: bridgeBaseUrl }); }
@@ -74,9 +77,19 @@ export class DartRectifyDiscovery {
             const value = await response.json();
             if (value.service !== 'dartrectify' || value.protocol_version !== 1 || typeof value.token !== 'string' || !/^[a-f0-9]{64}$/i.test(value.token) || !Array.isArray(value.boards) || !value.boards.includes('home') || !value.boards.includes('guest')) throw new Error('Invalid bridge');
             if (this.running && epoch === this.epoch) this.notify('online', value.token);
-        } catch {
+        } catch (error) {
             if (this.running && epoch === this.epoch) {
                 const permission = this.permission?.state as PermissionState | undefined;
+                const reason = timedOut ? 'timeout' : permission === 'denied' ? 'permission_denied' : 'request_failed';
+                const errorName = error instanceof Error ? error.name : 'UnknownError';
+                const failure = `${reason}:${errorName}:${permission ?? 'unknown'}`;
+                if (failure !== this.lastFailure || Date.now() - this.lastFailureAt >= 30_000) {
+                    this.diagnostic?.('dartrectify_discovery_failed', {
+                        errorName, reason, status: permission ?? 'unknown'
+                    });
+                    this.lastFailure = failure;
+                    this.lastFailureAt = Date.now();
+                }
                 this.notify(permission === 'denied' ? 'blocked' : permission === 'prompt' ? 'permission' : 'offline');
             }
         }

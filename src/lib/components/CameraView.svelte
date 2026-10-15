@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createEventDispatcher, onDestroy } from "svelte";
+    import { createEventDispatcher, onDestroy, onMount } from "svelte";
     import { sourceKey, sourceFromKey, rectifiedSettings, type CameraSource } from '../cameraSources';
     import { DartRectifyClient, type ServerStatus } from '../dartrectify/client.js';
     import { initialConnection, connectionLabels, connectionHelp, type BridgeConnection } from '../dartrectify/connection';
@@ -12,6 +12,7 @@
     import { matchForBoard } from "../scoring";
     import { editDraft } from "../manualEdit";
     import { defaultOverlaySizes, type OverlaySizes } from "../overlaySizes";
+    import type { CameraDiagnostics } from '../cameraDiagnostics';
     import {
         getTransformStyle,
         getMaskStyle,
@@ -37,6 +38,7 @@
     export let editLocked = false;
     export let ready = false;
     export let celebration: ScoringCelebration | null = null;
+    export let cameraDiagnostics: CameraDiagnostics | null = null;
 
     // Expose the camera elements for stream and frame measurements.
     export let videoElement: HTMLVideoElement | undefined = undefined;
@@ -60,6 +62,25 @@
     let bindingKey = '';
     let boundElement: HTMLVideoElement | HTMLImageElement | undefined;
     let boardFresh = false;
+    let trackCleanup: (() => void) | null = null;
+    let lastBridgeSummary = '';
+    let lastBridgeSample = 0;
+    let lastImageLoadAt = 0;
+
+    onMount(() => {
+        const timer = setInterval(() => {
+            if (selectedSource.kind !== 'webcam' || !activeStream || !videoElement) return;
+            cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2', 'webcam_health_sample', {
+                ready: ready,
+                muted: activeStream.getVideoTracks()[0]?.muted ?? null,
+                mediaReadyState: videoElement.readyState,
+                currentTimeSec: Math.round(videoElement.currentTime * 10) / 10,
+                width: videoElement.videoWidth,
+                height: videoElement.videoHeight
+            });
+        }, 10_000);
+        return () => clearInterval(timer);
+    });
     $: selectedDeviceId = sourceKey(selectedSource);
     $: rectified = selectedSource.kind === 'dartrectify';
     $: displayedSettings = rectified ? rectifiedSettings(draft ?? settings) : draft ?? settings;
@@ -70,6 +91,8 @@
 
     function stopStream() {
         streamRequest++;
+        trackCleanup?.(); trackCleanup = null;
+        if (bridgeClient || activeStream) cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2', 'stream_stopped');
         bridgeClient?.destroy(); bridgeClient = null;
         activeStream?.getTracks().forEach(track => track.stop()); activeStream = null;
         if (videoElement) videoElement.srcObject = null;
@@ -78,12 +101,38 @@
     onDestroy(stopStream);
 
     async function startWebcam(deviceId: string, el: HTMLVideoElement, request: number) {
+        const area = camId === 'cam1' ? 'cam1' : 'cam2';
+        cameraDiagnostics?.record(area, 'webcam_start_requested', {
+            deviceLabel: videoDevices.find(device => device.deviceId === deviceId)?.label || 'Unbenannte Kamera'
+        });
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId }, width: 1280, height: 720 } });
             if (request !== streamRequest) { stream.getTracks().forEach(track => track.stop()); return; }
             activeStream = stream; el.srcObject = stream;
-        } catch {
-            if (request === streamRequest) { ready = false; streamError = 'Webcam nicht verfügbar. Berechtigung prüfen oder die Kamera in DartRectify freigeben.'; }
+            const track = stream.getVideoTracks()[0];
+            const trackSettings = track?.getSettings();
+            cameraDiagnostics?.record(area, 'webcam_stream_started', {
+                width: trackSettings?.width ?? null, height: trackSettings?.height ?? null,
+                frameRate: trackSettings?.frameRate ?? null
+            });
+            if (track) {
+                const ended = () => { ready = false; cameraDiagnostics?.record(area, 'webcam_track_ended'); };
+                const muted = () => cameraDiagnostics?.record(area, 'webcam_track_muted', { muted: true });
+                const unmuted = () => cameraDiagnostics?.record(area, 'webcam_track_unmuted', { muted: false });
+                track.addEventListener('ended', ended);
+                track.addEventListener('mute', muted);
+                track.addEventListener('unmute', unmuted);
+                trackCleanup = () => {
+                    track.removeEventListener('ended', ended);
+                    track.removeEventListener('mute', muted);
+                    track.removeEventListener('unmute', unmuted);
+                };
+            }
+        } catch (error) {
+            if (request === streamRequest) {
+                ready = false; streamError = 'Webcam nicht verfügbar. Berechtigung prüfen oder die Kamera in DartRectify freigeben.';
+                cameraDiagnostics?.record(area, 'webcam_start_failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
+            }
         }
     }
     function syncSource(source: CameraSource, video: HTMLVideoElement | undefined, image: HTMLImageElement | undefined, connection: BridgeConnection) {
@@ -92,23 +141,59 @@
         const element = source.kind === 'webcam' ? video : source.kind === 'dartrectify' ? image : undefined;
         if (key === bindingKey && element === boundElement) return;
         stopStream(); bindingKey = key; boundElement = element; streamError = '';
+        lastBridgeSummary = ''; lastBridgeSample = 0; lastImageLoadAt = 0;
+        cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2', 'source_changed', {
+            source: source.kind,
+            board: source.kind === 'dartrectify' ? source.board : null,
+            deviceLabel: source.kind === 'webcam'
+                ? videoDevices.find(device => device.deviceId === source.deviceId)?.label || 'Unbenannte Kamera' : null
+        });
         const request = streamRequest;
         if (source.kind === 'none') return;
         if (source.kind === 'webcam' && video) { void startWebcam(source.deviceId, video, request); return; }
         if (source.kind !== 'dartrectify') return;
-        if (!token) { streamError = connectionHelp[connection.status]; return; }
+        if (!token) {
+            streamError = connectionHelp[connection.status];
+            cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2', 'dartrectify_unavailable', { status: connection.status });
+            return;
+        }
         if (!image) return;
         const board = source.board;
         bridgeClient = new DartRectifyClient({ token, [board]: image,
             onStatus: (status: ServerStatus) => {
                 if (request !== streamRequest) return;
                 const current = status.boards.find(item => item.id === board);
+                const summary = JSON.stringify([current?.status, current?.ready, current?.generation, current?.streams?.length, image.hidden]);
+                const now = Date.now();
+                if (summary !== lastBridgeSummary || now - lastBridgeSample >= 10_000) {
+                    cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2',
+                        summary !== lastBridgeSummary ? 'dartrectify_board_state' : 'dartrectify_board_sample', {
+                            board, status: current?.status ?? 'missing', ready: current?.ready ?? false,
+                            visible: !image.hidden,
+                            generation: current?.generation ?? null,
+                            sourceAgeMs: current?.source_age_ms ?? null,
+                            captureSequence: current?.capture_sequence ?? null,
+                            viewers: current?.viewers ?? null,
+                            streamCount: current?.streams?.length ?? null,
+                            sendAgeMs: current?.streams?.[0]?.send_age_ms ?? null
+                        });
+                    lastBridgeSummary = summary;
+                    lastBridgeSample = now;
+                }
                 boardFresh = current?.ready === true;
                 ready = boardFresh && !image.hidden && image.naturalWidth > 0;
                 const messages: Record<string, string> = { camera_missing: 'In DartRectify eine Kamera auswählen.', stale: 'Kein aktuelles Kamerabild. Kameraanschluss prüfen.', uncalibrated: 'Dartscheibe in DartRectify kalibrieren.', orientation_required: 'Die 20 in DartRectify ausrichten.', calibrating: 'Kalibrierung läuft in DartRectify.', encoder_error: 'Das Kamerabild konnte nicht übertragen werden.' };
                 streamError = boardFresh ? '' : messages[current?.status ?? ''] ?? 'Warte auf ein aktuelles DartRectify-Bild.';
             },
-            onError: () => { if (request === streamRequest) { ready = false; boardFresh = false; streamError = 'Verbindung zu DartRectify unterbrochen. Die Wiederverbindung erfolgt automatisch.'; } }
+            onError: (error: Error) => {
+                if (request !== streamRequest) return;
+                ready = false; boardFresh = false;
+                streamError = 'Verbindung zu DartRectify unterbrochen. Die Wiederverbindung erfolgt automatisch.';
+                cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2', 'dartrectify_request_failed', {
+                    board, errorName: error.name || 'Error',
+                    httpStatus: Number(error.message.match(/^DartRectify HTTP (\d{3})$/)?.[1]) || null
+                });
+            }
         });
         bridgeClient.start();
     }
@@ -253,8 +338,19 @@
         {/if}
         {#if rectified}
             <img class="rectified" hidden bind:this={imageElement} alt="Entzerrte Dartscheibe {label}" crossorigin="anonymous" referrerpolicy="no-referrer"
-                on:load={() => { videoWidth = imageElement?.naturalWidth ?? 0; videoHeight = imageElement?.naturalHeight ?? 0; ready = boardFresh; }}
-                on:error={() => ready = false}
+                on:load={() => {
+                    videoWidth = imageElement?.naturalWidth ?? 0; videoHeight = imageElement?.naturalHeight ?? 0; ready = boardFresh;
+                    if (Date.now() - lastImageLoadAt >= 10_000) {
+                        cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2', 'dartrectify_image_loaded', {
+                            width: videoWidth, height: videoHeight
+                        });
+                        lastImageLoadAt = Date.now();
+                    }
+                }}
+                on:error={() => {
+                    ready = false;
+                    cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2', 'dartrectify_image_error');
+                }}
                 style={getTransformStyle(displayedSettings, camId, { width: viewportWidth, height: viewportHeight, videoWidth, videoHeight })} />
         {:else}
         <!-- svelte-ignore a11y-media-has-caption -->
@@ -263,7 +359,21 @@
             autoplay
             playsinline
             muted
-            on:loadedmetadata={() => { videoWidth = videoElement?.videoWidth ?? 0; videoHeight = videoElement?.videoHeight ?? 0; ready = true; }}
+            on:loadedmetadata={() => {
+                videoWidth = videoElement?.videoWidth ?? 0; videoHeight = videoElement?.videoHeight ?? 0; ready = true;
+                cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2', 'video_metadata', {
+                    width: videoWidth, height: videoHeight
+                });
+            }}
+            on:playing={() => cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2', 'video_playing')}
+            on:waiting={() => cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2', 'video_waiting')}
+            on:stalled={() => cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2', 'video_stalled')}
+            on:error={() => {
+                ready = false;
+                cameraDiagnostics?.record(camId === 'cam1' ? 'cam1' : 'cam2', 'video_error', {
+                    errorName: videoElement?.error ? `MediaError${videoElement.error.code}` : 'UnknownError'
+                });
+            }}
             on:resize={() => { videoWidth = videoElement?.videoWidth ?? 0; videoHeight = videoElement?.videoHeight ?? 0; }}
             style={getTransformStyle(displayedSettings, camId, { width: viewportWidth, height: viewportHeight, videoWidth, videoHeight })}
         ></video>

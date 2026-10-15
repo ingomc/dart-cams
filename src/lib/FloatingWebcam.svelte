@@ -1,14 +1,18 @@
 <script lang="ts">
 	import { createEventDispatcher, onMount, onDestroy } from "svelte";
+	import type { CameraDiagnostics } from '$lib/cameraDiagnostics';
 
 	export let videoDevices: MediaDeviceInfo[] = [];
 	export let visible = false;
 	export let checkingCameras = false;
 	export let cameraError = '';
+	export let cameraDiagnostics: CameraDiagnostics | null = null;
 
 	let videoElement: HTMLVideoElement;
 	let selectedDeviceId = "";
 	let stream: MediaStream | null = null;
+	let trackCleanup: (() => void) | null = null;
+	let healthTimer: ReturnType<typeof setInterval> | undefined;
 	let streamError = '';
 	let streamRequest = 0;
 	let boundVisible = false;
@@ -43,6 +47,16 @@
 	let initialHeight = 0;
 
 	onMount(() => {
+		healthTimer = setInterval(() => {
+			if (!visible || !stream || !videoElement) return;
+			cameraDiagnostics?.record('floating', 'webcam_health_sample', {
+				muted: stream.getVideoTracks()[0]?.muted ?? null,
+				mediaReadyState: videoElement.readyState,
+				currentTimeSec: Math.round(videoElement.currentTime * 10) / 10,
+				width: videoElement.videoWidth,
+				height: videoElement.videoHeight
+			});
+		}, 10_000);
 		window.addEventListener("mousemove", handleMove);
 		window.addEventListener("mouseup", handleEnd);
 		window.addEventListener("touchmove", handleMove, { passive: false });
@@ -51,6 +65,7 @@
 	});
 
 	onDestroy(() => {
+		if (healthTimer) clearInterval(healthTimer);
 		window.removeEventListener("mousemove", handleMove);
 		window.removeEventListener("mouseup", handleEnd);
 		window.removeEventListener("touchmove", handleMove);
@@ -78,6 +93,9 @@
 	}
 
 	async function startStream(deviceId: string, element: HTMLVideoElement, request: number) {
+		cameraDiagnostics?.record('floating', 'webcam_start_requested', {
+			deviceLabel: videoDevices.find(device => device.deviceId === deviceId)?.label || 'Unbenannte Kamera'
+		});
 		try {
 			const nextStream = await navigator.mediaDevices.getUserMedia({
 				video: { deviceId: { exact: deviceId } },
@@ -88,6 +106,25 @@
 			}
 			stream = nextStream;
 			element.srcObject = nextStream;
+			const track = nextStream.getVideoTracks()[0];
+			const settings = track?.getSettings();
+			cameraDiagnostics?.record('floating', 'webcam_stream_started', {
+				width: settings?.width ?? null, height: settings?.height ?? null,
+				frameRate: settings?.frameRate ?? null
+			});
+			if (track) {
+				const ended = () => cameraDiagnostics?.record('floating', 'webcam_track_ended');
+				const muted = () => cameraDiagnostics?.record('floating', 'webcam_track_muted', { muted: true });
+				const unmuted = () => cameraDiagnostics?.record('floating', 'webcam_track_unmuted', { muted: false });
+				track.addEventListener('ended', ended);
+				track.addEventListener('mute', muted);
+				track.addEventListener('unmute', unmuted);
+				trackCleanup = () => {
+					track.removeEventListener('ended', ended);
+					track.removeEventListener('mute', muted);
+					track.removeEventListener('unmute', unmuted);
+				};
+			}
 			dispatch('refreshDevices', { requestPermission: false });
 		} catch (err) {
 			if (request !== streamRequest) return;
@@ -99,12 +136,17 @@
 					: name === 'NotFoundError' || name === 'OverconstrainedError'
 						? 'Kamera nicht gefunden. Kameras neu suchen.'
 						: 'Webcam konnte nicht gestartet werden.';
+			cameraDiagnostics?.record('floating', 'webcam_start_failed', { errorName: name || 'UnknownError' });
 			settingsOpen = true;
 		}
 	}
 
 	function syncStream(show: boolean, deviceId: string, element: HTMLVideoElement | undefined) {
 		if (show === boundVisible && deviceId === boundDeviceId && element === boundElement) return;
+		cameraDiagnostics?.record('floating', 'source_changed', {
+			visible: show,
+			deviceLabel: deviceId ? videoDevices.find(device => device.deviceId === deviceId)?.label || 'Unbenannte Kamera' : null
+		});
 		boundVisible = show;
 		boundDeviceId = deviceId;
 		boundElement = element;
@@ -115,7 +157,9 @@
 
 	function stopStream() {
 		streamRequest++;
+		trackCleanup?.(); trackCleanup = null;
 		if (stream) {
+			cameraDiagnostics?.record('floating', 'stream_stopped');
 			stream.getTracks().forEach((track) => track.stop());
 			stream = null;
 		}
@@ -247,7 +291,16 @@
 	>
 		<div class="video-container">
 			<!-- svelte-ignore a11y-media-has-caption -->
-			<video bind:this={videoElement} class:mirrored autoplay playsinline muted></video>
+			<video bind:this={videoElement} class:mirrored autoplay playsinline muted
+				on:loadedmetadata={() => cameraDiagnostics?.record('floating', 'video_metadata', {
+					width: videoElement?.videoWidth ?? null, height: videoElement?.videoHeight ?? null
+				})}
+				on:playing={() => cameraDiagnostics?.record('floating', 'video_playing')}
+				on:waiting={() => cameraDiagnostics?.record('floating', 'video_waiting')}
+				on:stalled={() => cameraDiagnostics?.record('floating', 'video_stalled')}
+				on:error={() => cameraDiagnostics?.record('floating', 'video_error', {
+					errorName: videoElement?.error ? `MediaError${videoElement.error.code}` : 'UnknownError'
+				})}></video>
 		</div>
 
 		<div class="webcam-actions">

@@ -1,5 +1,6 @@
 <script lang="ts">
     import FloatingWebcam from "$lib/FloatingWebcam.svelte";
+    import type { CameraDiagnostics } from '$lib/cameraDiagnostics';
 
     export let scoringUrl: string;
     export let cropTop: number;
@@ -10,6 +11,7 @@
     export let videoDevices: MediaDeviceInfo[];
     export let checkingCameras = false;
     export let cameraError = '';
+    export let cameraDiagnostics: CameraDiagnostics | null = null;
 </script>
 
 {#if showIframe}
@@ -35,7 +37,7 @@
     </section>
 {/if}
 
-<FloatingWebcam bind:visible={showFloatingWebcam} {videoDevices} {checkingCameras} {cameraError}
+<FloatingWebcam bind:visible={showFloatingWebcam} {videoDevices} {checkingCameras} {cameraError} {cameraDiagnostics}
     on:interaction on:refreshDevices />
 
 <style>

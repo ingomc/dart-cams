@@ -13,7 +13,7 @@ Die Motive liegen unter `static/stream-slates/` und sind gemeinsam gestaltet:
 
 Die PNGs werden auf dem Owncast-Server nach `/app/data/public/sco/` kopiert. Owncast stellt sie über `/public/sco/<Dateiname>` bereit. Das bestehende Docker-Volume `owncast-data` bewahrt sie über Neustarts und Deployments hinweg auf.
 
-Unter **Server Setup → General → Offline Message** wird `offline-message.html` eingesetzt. Unter **Appearance → Custom CSS** wird `appearance.css` verwendet. Für ein anderes Offline-Motiv im HTML den Dateinamen und den Alternativtext gemeinsam ändern. Das Standbild verschwindet automatisch, wenn Owncast wieder live ist.
+Unter **Configuration → General → General → Offline Message** wird `offline-message.html` eingesetzt. Im danebenliegenden Tab **Appearance → Customize your page styling with CSS** wird `appearance.css` verwendet. Für ein anderes Offline-Motiv im HTML den Dateinamen und den Alternativtext gemeinsam ändern. Das Standbild verschwindet automatisch, wenn Owncast wieder live ist.
 
 Die Offline-Nachricht ändert ausschließlich die Zuschauer-Webseite. Owncast hängt beim Stream-Ende außerdem einen achtsekündigen MPEG-TS-Clip an die HLS-Playlist an. `offline-v1.mpegts` wird dafür nach `/app/data/branding/offline-v2.ts` kopiert. Die Startanweisung aus `compose.yaml` kopiert diesen persistent gespeicherten Clip beim Containerstart nach `/app/static/offline-v2.ts`. Owncast 0.3.0 verwendet diese Datei anstelle der eingebauten Standard-Animation. Es ist kein eigener Owncast-Build nötig.
 

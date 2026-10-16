@@ -103,9 +103,9 @@ img[src^="/logo"] { content: url("/logo?sco-brand=20261016"); object-fit: contai
 
 /* SCO holding card: public assets are stored in Owncast's persistent data volume. */
 #offline-banner { padding: 0; overflow: hidden; background: #151719; }
-#offline-banner > div { width: 100%; max-width: none; padding: 0; }
+#offline-banner > div { width: 100%; max-width: none; padding: 0; margin: 0; }
 #offline-banner [class*="__bodyText"] { width: 100%; max-width: none; margin: 0; }
 #offline-banner .sco-offline-card { margin: 0; width: 100%; }
-#offline-banner .sco-offline-card img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: contain; }
+#offline-banner .sco-offline-card img { display: block; width: 100%; height: auto; max-height: max(180px, calc(100svh - 160px)); aspect-ratio: 16 / 9; object-fit: contain; }
 #offline-banner .sco-offline-links { margin: 0; padding: 12px 24px; text-align: center; font-size: 14px; }
 #offline-banner [class*="__lastLiveDate"] { margin: 0; padding: 0 24px 12px; color: #aeb3ba; }

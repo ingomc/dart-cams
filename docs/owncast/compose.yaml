@@ -1,0 +1,23 @@
+services:
+  owncast:
+    image: owncast/owncast:latest
+    restart: unless-stopped
+    working_dir: /app
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /app/static
+        if [ -f /app/data/branding/offline-v2.ts ]; then
+          cp /app/data/branding/offline-v2.ts /app/static/offline-v2.ts
+        fi
+        exec /app/owncast
+    volumes:
+      - owncast-data:/app/data
+    expose:
+      - 8080
+      - 1935
+    ports:
+      - "1935:1935"
+volumes:
+  owncast-data: {}

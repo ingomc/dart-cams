@@ -76,6 +76,8 @@ bun run preview
 
 ## Deployment
 
+Owncast holding images, the custom end-of-stream clip and setup instructions are maintained in [docs/owncast](docs/owncast/README.md).
+
 This project is configured to deploy automatically to **GitHub Pages** via GitHub Actions.
 
 1. Push your changes to the `main` branch.

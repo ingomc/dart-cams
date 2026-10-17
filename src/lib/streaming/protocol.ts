@@ -5,7 +5,7 @@ export const DEFAULT_VIEWER_URL = 'http://darts-owncast-5e7884-202-61-206-24.ssl
 export const DEFAULT_RTMP_URL = 'rtmp://darts-owncast-5e7884-202-61-206-24.sslip.io:1935/live';
 export const MAX_STREAM_BUFFER = 8 * 1024 * 1024;
 
-export type StreamPhase = 'idle' | 'selecting' | 'connecting' | 'live' | 'error';
+export type StreamPhase = 'idle' | 'selecting' | 'previewing' | 'connecting' | 'live' | 'error';
 export type StreamState = {
 	phase: StreamPhase;
 	scene: StreamScene;
@@ -46,5 +46,5 @@ export function recordingMimeType(supported: (mime: string) => boolean): string 
 }
 
 export function isStreamActive(phase: StreamPhase): boolean {
-	return phase === 'selecting' || phase === 'connecting' || phase === 'live';
+	return phase === 'selecting' || phase === 'previewing' || phase === 'connecting' || phase === 'live';
 }

@@ -1,6 +1,8 @@
 import { STREAM_HELPER_URL, MAX_STREAM_BUFFER, initialStreamState, isStreamActive, recordingMimeType, validateStreamDestination, type StreamState } from './protocol';
 import { StreamCompositor, type StreamOutput, type StreamOutputFactory } from './compositor';
 import type { StreamScene } from './scenes';
+import { acceptsCapture, captureModeForBrowser, needsCapturePreview } from './capture';
+import { STREAM_PROFILE } from './profile';
 
 export class LivestreamClient {
 	state = { ...initialStreamState };
@@ -12,9 +14,17 @@ export class LivestreamClient {
 	private timeout: ReturnType<typeof setTimeout> | undefined;
 	private generation = 0;
 	private disposed = false;
+	private approveCapture: ((approved: boolean) => void) | null = null;
 
 	constructor(private readonly onChange: (state: StreamState) => void,
 		private readonly createOutput: StreamOutputFactory = (source, scene, onError) => new StreamCompositor(source, scene, onError)) {}
+	get captureMode() { return captureModeForBrowser(typeof navigator === 'undefined' ? '' : navigator.userAgent ?? ''); }
+	get capturePreview(): MediaStream | null { return this.state.phase === 'previewing' ? this.media : null; }
+	confirmCapture(): void {
+		const approve = this.approveCapture;
+		this.approveCapture = null;
+		approve?.(true);
+	}
 	private update(change: Partial<StreamState>) {
 		this.state = { ...this.state, ...change };
 		if (!this.disposed) this.onChange(this.state);
@@ -44,12 +54,15 @@ export class LivestreamClient {
 		} finally { this.update({ busy: false }); }
 	}
 
-	private acceptMetadata(data: { service: string; version: number; token: string; ffmpegAvailable: boolean; configured: boolean; viewerUrl: string; rtmpUrl: string }) {
+	private acceptMetadata(data: { service: string; version: number; profileId?: string; token: string; ffmpegAvailable: boolean; configured: boolean; viewerUrl: string; rtmpUrl: string }) {
 		if (data.service !== 'dartcams-stream' || data.version !== 1 || !/^[a-f0-9]{64}$/.test(data.token)) throw new Error();
 		const destination = validateStreamDestination(data.viewerUrl, data.rtmpUrl);
 		this.token = data.token;
-		this.update({ ...destination, helperConnected: true, configured: !!data.configured && data.ffmpegAvailable,
-			phase: 'idle', message: data.ffmpegAvailable ? '' : 'FFmpeg fehlt auf diesem Computer. Bitte installieren und den Helfer neu starten.' });
+		const compatible = data.profileId === STREAM_PROFILE.id;
+		this.update({ ...destination, helperConnected: true, configured: !!data.configured && data.ffmpegAvailable && compatible,
+			phase: 'idle', message: !compatible
+				? 'Für 1080p bitte den Streaming-Helfer aktualisieren und neu starten („bun run stream:helper“). Danach erneut verbinden und den Stream-Key eintragen.'
+				: data.ffmpegAvailable ? '' : 'FFmpeg fehlt auf diesem Computer. Bitte installieren und den Helfer neu starten.' });
 	}
 
 	async configure(viewerUrl: string, rtmpUrl: string, streamKey: string): Promise<boolean> {
@@ -79,20 +92,24 @@ export class LivestreamClient {
 	async start(): Promise<void> {
 		if (!this.state.configured || this.state.busy || isStreamActive(this.state.phase)) return;
 		if (!navigator.mediaDevices?.getDisplayMedia || typeof MediaRecorder === 'undefined') {
-			this.update({ phase: 'error', message: 'Tab-Streaming wird hier nicht unterstützt. Bitte Dartcams in Chrome oder Edge öffnen.' });
+			this.update({ phase: 'error', message: 'Bildfreigabe wird hier nicht unterstützt. Bitte Dartcams über HTTPS oder localhost in einem aktuellen Desktop-Browser öffnen.' });
 			return;
 		}
 		const mimeType = recordingMimeType(type => MediaRecorder.isTypeSupported(type));
 		if (!mimeType) {
-			this.update({ phase: 'error', message: 'WebM-Aufnahme fehlt. Bitte Chrome oder Edge verwenden.' });
+			this.update({ phase: 'error', message: 'WebM-Aufnahme fehlt. Bitte einen aktuellen Firefox, Chrome oder Edge verwenden.' });
 			return;
 		}
 		const generation = ++this.generation;
+		const captureMode = this.captureMode;
 		let preparingOutput = false;
 		this.update({ phase: 'selecting', message: '' });
 		try {
-			const captureOptions = {
-				video: { displaySurface: 'browser', frameRate: 30, width: 1920, height: 1080 }, audio: false,
+			const video = { frameRate: { ideal: STREAM_PROFILE.fps, max: STREAM_PROFILE.fps }, width: STREAM_PROFILE.width, height: STREAM_PROFILE.height };
+			const captureOptions = captureMode === 'window' ? {
+				video, audio: false,
+			} : {
+				video: { ...video, displaySurface: 'browser' }, audio: false,
 				preferCurrentTab: true, selfBrowserSurface: 'include', monitorTypeSurfaces: 'exclude',
 				surfaceSwitching: 'exclude', systemAudio: 'exclude',
 			};
@@ -100,11 +117,20 @@ export class LivestreamClient {
 			if (generation !== this.generation || this.disposed) { media.getTracks().forEach(track => track.stop()); return; }
 			this.media = media;
 			const track = media.getVideoTracks()[0];
-			if (!track || track.getSettings().displaySurface !== 'browser') {
-				this.stop('Bitte den Dartcams-Browser-Tab auswählen. Ganze Bildschirme und Fenster werden nicht übertragen.');
+			const captureSettings = track?.getSettings();
+			const previewRequired = !!captureSettings && needsCapturePreview(captureSettings, captureMode);
+			if (!captureSettings || (!acceptsCapture(captureSettings, captureMode) && !previewRequired)) {
+				this.stop(captureMode === 'window'
+					? 'Bitte nur das Browserfenster mit Dartcams freigeben. Ganze Bildschirme werden nicht übertragen.'
+					: 'Bitte den Dartcams-Browser-Tab auswählen. Ganze Bildschirme und Fenster werden nicht übertragen.');
 				return;
 			}
 			track.addEventListener('ended', () => { if (generation === this.generation) this.stop(); }, { once: true });
+			if (previewRequired) {
+				const approved = new Promise<boolean>(resolve => { this.approveCapture = resolve; });
+				this.update({ phase: 'previewing' });
+				if (!(await approved) || generation !== this.generation || this.disposed) return;
+			}
 			this.update({ phase: 'connecting' });
 			preparingOutput = true;
 			this.timeout = setTimeout(() => { if (generation === this.generation) this.stop('Sendebilder konnten nicht vorbereitet werden. Bitte erneut starten.'); }, 15_000);
@@ -121,7 +147,7 @@ export class LivestreamClient {
 			this.socket = socket;
 			this.timeout = setTimeout(() => { if (generation === this.generation) this.stop('Stream-Start dauert zu lange. Helfer und Owncast prüfen.'); }, 30_000);
 			socket.onopen = () => {
-				if (generation === this.generation) socket.send(JSON.stringify({ type: 'start', token: this.token }));
+				if (generation === this.generation) socket.send(JSON.stringify({ type: 'start', token: this.token, profileId: STREAM_PROFILE.id }));
 			};
 			socket.onmessage = event => {
 				if (generation !== this.generation) return;
@@ -130,16 +156,16 @@ export class LivestreamClient {
 				if (data.type === 'ready') {
 					if (this.recorder) return;
 					try {
-						const recorder = new MediaRecorder(broadcast, { mimeType, videoBitsPerSecond: 5_000_000 });
+						const recorder = new MediaRecorder(broadcast, { mimeType, videoBitsPerSecond: STREAM_PROFILE.recordingBitsPerSecond });
 						this.recorder = recorder;
 						recorder.ondataavailable = chunk => {
 							if (generation !== this.generation || socket.readyState !== WebSocket.OPEN || !chunk.data.size) return;
 							if (socket.bufferedAmount + chunk.data.size > MAX_STREAM_BUFFER) { this.stop('Übertragung zu langsam. Bitte Stream erneut starten.'); return; }
 							socket.send(chunk.data);
 						};
-						recorder.onerror = () => this.stop('Die Tab-Aufnahme ist abgebrochen. Bitte erneut starten.');
+						recorder.onerror = () => this.stop('Die Bildaufnahme ist abgebrochen. Bitte erneut starten.');
 						recorder.start(500);
-					} catch { this.stop('Die Tab-Aufnahme konnte nicht gestartet werden.'); }
+					} catch { this.stop('Die Bildaufnahme konnte nicht gestartet werden.'); }
 				} else if (data.type === 'live') {
 					clearTimeout(this.timeout);
 					this.update({ phase: 'live', message: '' });
@@ -151,12 +177,14 @@ export class LivestreamClient {
 		} catch (error) {
 			if (generation !== this.generation) return;
 			this.stop(preparingOutput ? error instanceof Error ? error.message : 'Sendebilder konnten nicht vorbereitet werden.' : error instanceof DOMException && error.name === 'NotAllowedError'
-				? 'Tab-Freigabe abgebrochen oder nicht erlaubt.' : 'Tab-Freigabe fehlgeschlagen. Bitte Chrome oder Edge verwenden und die Freigabe erlauben.');
+				? 'Bildfreigabe abgebrochen oder nicht erlaubt.' : 'Bildfreigabe fehlgeschlagen. Bitte die Browser- und Betriebssystemberechtigung zur Bildschirmaufnahme prüfen.');
 		}
 	}
 
 	stop(message = ''): void {
 		++this.generation;
+		this.approveCapture?.(false);
+		this.approveCapture = null;
 		clearTimeout(this.timeout);
 		const recorder = this.recorder;
 		this.recorder = null;

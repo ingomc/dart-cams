@@ -23,7 +23,8 @@
 	function startStream(): void {
 		settingsOpen = false;
 		activeCameraSettings = null;
-		void livestream?.start();
+		if (streamState.phase === 'previewing') livestream?.confirmCapture();
+		else void livestream?.start();
 	}
 	function stopStream(): void { livestream?.stop(); }
 	let activeSettingsSection = "";
@@ -364,7 +365,7 @@
 	onMount(() => {
 		livestream = new LivestreamClient(state => {
 			streamState = state;
-			if (state.phase === 'error') showStreamSettings();
+			if (state.phase === 'error' || state.phase === 'previewing') showStreamSettings();
 		}, (source, scene, onError) => new StreamCompositor(source, scene, onError, base));
 		window.addEventListener('pagehide', stopStream);
 		unsubscribeDiagnostics = cameraDiagnostics.subscribe(() => {

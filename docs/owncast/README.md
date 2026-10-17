@@ -1,5 +1,15 @@
 # SCO-Pausenbilder für Owncast
 
+## Logo und Browser-Icons
+
+Unter **General → Logo** wird `branding/sco-logo-512.png` verwendet: das einzelne SCO-Schild aus dem Original-Icon-Satz von [sc-oberfuellbach.de](https://www.sc-oberfuellbach.de/). Unter **Favicon** wird `branding/sco-favicon.ico` hochgeladen; die ICO-Datei enthält mehrere Auflösungen. `sco-icon-192.png` und `sco-apple-touch-icon.png` bewahren die weiteren Originalgrößen im Projekt auf.
+
+`branding.js` wird zusätzlich unter **Custom Scripting** eingesetzt. Es versioniert die Favicon-Adresse, ergänzt das SCO-Logo als Touch-Icon sowie den Seitennamen und die rote Browser-Akzentfarbe. Der vorhandene Inhalt des Feldes bleibt erhalten; das Skript wird einmal angehängt. Es benötigt keine Zugangsdaten und sendet keine Daten. Die App-Icons des vorhandenen Owncast-Manifests verwenden ebenfalls `/favicon.ico`.
+
+Bei einem späteren Logo-Wechsel die Dateien in Owncast hochladen und die Versionsnummer `sco-brand` in `appearance.css` sowie `branding.js` gemeinsam ändern. Owncast liefert die Bilder mit langem Browser-Cache aus; eine neue Adresse lädt die aktuelle Datei sofort. Danach nur die Zuschauer-Seite neu laden.
+
+## Pausenbilder
+
 Die Motive liegen unter `static/stream-slates/` und sind gemeinsam gestaltet:
 
 | Datei | Verwendung |
@@ -14,6 +24,8 @@ Die Motive liegen unter `static/stream-slates/` und sind gemeinsam gestaltet:
 Die PNGs werden auf dem Owncast-Server nach `/app/data/public/sco/` kopiert. Owncast stellt sie über `/public/sco/<Dateiname>` bereit. Das bestehende Docker-Volume `owncast-data` bewahrt sie über Neustarts und Deployments hinweg auf.
 
 Unter **Configuration → General → General → Offline Message** wird `offline-message.html` eingesetzt. Im danebenliegenden Tab **Appearance → Customize your page styling with CSS** wird `appearance.css` verwendet. Für ein anderes Offline-Motiv im HTML den Dateinamen und den Alternativtext gemeinsam ändern. Das Standbild verschwindet automatisch, wenn Owncast wieder live ist.
+
+Die Start-/Stoppmeldungen im Chat erhalten über `#owncast-chat-action-message-text` eine helle Fläche, dunkle Schrift und einen roten Rand. Vorder- und Hintergrund werden gemeinsam gesetzt, da Owncast diese Meldungen sonst mit der dunklen Palette-0-Farbe und dem ebenfalls dunklen Chat-Text kombiniert. Die Regel gilt auch im eingebetteten Chat. CSS-Änderungen speichern und anschließend nur die Zuschauer-Seite neu laden; der sendende Dartcams-Tab und der Stream können weiterlaufen.
 
 Die Offline-Nachricht ändert ausschließlich die Zuschauer-Webseite. Owncast hängt beim Stream-Ende außerdem einen achtsekündigen MPEG-TS-Clip an die HLS-Playlist an. `offline-v1.mpegts` wird dafür nach `/app/data/branding/offline-v2.ts` kopiert. Die Startanweisung aus `compose.yaml` kopiert diesen persistent gespeicherten Clip beim Containerstart nach `/app/static/offline-v2.ts`. Owncast 0.3.0 verwendet diese Datei anstelle der eingebauten Standard-Animation. Es ist kein eigener Owncast-Build nötig.
 

@@ -78,9 +78,13 @@ Kameraquellen, Bezeichnungen, Boardzuweisungen und globale Schriftgrößen behal
 
 ## Livestream zu Owncast
 
+Der Qualitätshinweis nennt **1080p / 25 fps · Video bis 3 Mbit/s · ohne Ton**. Es wird keine Audiospur aufgenommen oder künstlich erzeugt. Aufnahme, Sendebilder und Encoder verwenden ein gemeinsames Profil. Ein veralteter Helfer zeigt einen konkreten Update-Hinweis statt einen vermeintlichen Full-HD-Stream zu starten. Owncast codiert serverseitig **1080p · 25 FPS** mit 2,5 Mbit/s und **720p · Sparsam** mit 1,2 Mbit/s für schwächere Zuschauerverbindungen; die Qualitätsauswahl liegt im Zuschauerplayer.
+
 Der kompakte Button **Stream** in der unteren Leiste öffnet das Akkordeon **Livestream** mit Sendesymbol. Dort stehen Helferstatus, Zuschauer-Link, RTMP-Server, maskierter Stream-Key, die Sendebild-Auswahl, Start/Stop und der kopierbare Zuschauer-Link. Beim Start schließt das Panel; die Browserfreigabe hebt den aktuellen Tab hervor. Ein laufender Stream zeigt unten **Stop** mit Stoppsymbol in Markenrot und die drei kompakten Schalter **Start / Live / Pause**. Während des Verbindens steht dort **Abbrechen**; Fehler öffnen den Livestream-Bereich mit einer konkreten Meldung. Der Status „Sendet …“ erscheint erst nach Encoder-Fortschritt zum Server.
 
 Die Sendebild-Schalter verwenden Outline-Icons, verständliche Beschriftungen und `aria-pressed`; die aktuelle Auswahl ist rot hervorgehoben. Bei wenig Platz zeigt die Leiste nur die beschrifteten Icons mit Tooltip. Dieselbe Auswahl steht in den Einstellungen mit Vorschau der beiden SCO-Motive. Standard und Zustand nach Stop sind **Startbild**. **Live** sendet das gerenderte Tab-Bild einschließlich geöffneter Menüs; **Startbild** und **Pause** senden ausschließlich das jeweilige Motiv. Die eigenen Kameras bleiben in allen Szenen sichtbar. Umschalten unterbricht weder Recorder noch Stream-Verbindung.
+
+Firefox verwendet eine Fensteraufnahme; der Status fordert dort zur Wahl des Dartcams-Fensters auf. Ein kurzer Hinweis erklärt Vollbild und die Sichtbarkeit von Fensterleisten bzw. Tabwechseln. Liefert Firefox keinen Quellentyp, öffnet sich das Panel mit einer lokalen Aufnahmevorschau, **Dieses Fenster streamen** und **Abbrechen**. Erst die Bestätigung startet die Übertragung. Erkannte Bildschirmquellen werden abgewiesen. Chrome/Edge verwenden die Tab-Aufnahme.
 
 Die Controls nutzen dieselben Fokus- und Idle-Regeln wie die übrige Leiste. Stoppen ist zusätzlich über die sichtbare Freigabeanzeige des Browsers möglich. Kamera-/Scoringlogik und gespeicherte Bildprofile bleiben unabhängig. Der Stream-Key liegt ausschließlich im lokalen Helfer bis zu dessen Neustart. Einrichtung und Grenzen: [Livestream-Anleitung](docs/LIVESTREAM.md).
 

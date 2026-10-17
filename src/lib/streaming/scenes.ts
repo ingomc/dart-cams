@@ -1,3 +1,5 @@
+import { STREAM_PROFILE } from './profile';
+
 export type StreamScene = 'start' | 'live' | 'pause';
 
 export const streamScenes = [
@@ -11,7 +13,7 @@ export function streamSlateUrl(scene: Exclude<StreamScene, 'live'>, base = ''): 
 }
 
 /** Fit both portrait tab captures and holding cards without cropping names or scores. */
-export function fitStreamFrame(width: number, height: number, outputWidth = 1280, outputHeight = 720) {
+export function fitStreamFrame(width: number, height: number, outputWidth: number = STREAM_PROFILE.width, outputHeight: number = STREAM_PROFILE.height) {
 	if (width <= 0 || height <= 0) return null;
 	const scale = Math.min(outputWidth / width, outputHeight / height);
 	return { x: (outputWidth - width * scale) / 2, y: (outputHeight - height * scale) / 2,

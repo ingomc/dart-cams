@@ -1,4 +1,5 @@
 import { fitStreamFrame, streamSlateUrl, type StreamScene } from './scenes';
+import { STREAM_PROFILE } from './profile';
 
 export interface StreamOutput {
 	start(): Promise<MediaStream>;
@@ -33,8 +34,8 @@ export class StreamCompositor implements StreamOutput {
 	private disposed = false;
 
 	constructor(source: MediaStream, private scene: StreamScene, private readonly onError: () => void, private readonly base = '') {
-		this.canvas.width = 1280;
-		this.canvas.height = 720;
+		this.canvas.width = STREAM_PROFILE.width;
+		this.canvas.height = STREAM_PROFILE.height;
 		this.video.muted = true;
 		this.video.playsInline = true;
 		this.video.srcObject = source;
@@ -43,7 +44,7 @@ export class StreamCompositor implements StreamOutput {
 	async start(): Promise<MediaStream> {
 		try {
 			this.context = this.canvas.getContext('2d', { alpha: false });
-			if (!this.context || !this.canvas.captureStream) throw new Error('Sendebilder werden hier nicht unterstützt. Bitte Chrome oder Edge verwenden.');
+			if (!this.context || !this.canvas.captureStream) throw new Error('Sendebilder werden hier nicht unterstützt. Bitte einen aktuellen Firefox, Chrome oder Edge verwenden.');
 			// Preload both cards before opening the publisher. A missing card must never
 			// silently expose the live view when the operator selected a holding screen.
 			const [start, pause] = await Promise.all([
@@ -53,7 +54,7 @@ export class StreamCompositor implements StreamOutput {
 			]);
 			if (this.disposed) throw new DOMException('Aborted', 'AbortError');
 			this.slates = { start, pause };
-			this.output = this.canvas.captureStream(30);
+			this.output = this.canvas.captureStream(STREAM_PROFILE.fps);
 			this.render();
 			this.clock = new Worker(new URL('./frameClock.worker.ts', import.meta.url), { type: 'module' });
 			this.clock.onmessage = () => {

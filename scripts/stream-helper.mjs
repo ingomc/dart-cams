@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { DEFAULT_VIEWER_URL, DEFAULT_RTMP_URL, MAX_STREAM_BUFFER, validateStreamDestination, validateStreamKey } from '../src/lib/streaming/protocol.ts';
+import { STREAM_PROFILE } from '../src/lib/streaming/profile.ts';
 
 export function allowedOrigin(origin, extraOrigins = []) {
   if (['https://cams.ingomc.de', 'https://ingomc.github.io', ...extraOrigins].includes(origin)) return true;
@@ -11,13 +12,15 @@ export function allowedOrigin(origin, extraOrigins = []) {
 }
 
 export function ffmpegArguments(target) {
+  const { width, height, fps, videoMaxBitsPerSecond, videoBufferBits, crf, keyframeSeconds } = STREAM_PROFILE;
+  const keyframes = String(fps * keyframeSeconds);
   return ['-hide_banner', '-loglevel', 'warning', '-nostats', '-progress', 'pipe:1',
     '-fflags', '+genpts', '-thread_queue_size', '256', '-f', 'webm', '-i', 'pipe:0',
-    '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-map', '0:v:0', '-map', '1:a:0',
-    '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30',
+    '-map', '0:v:0', '-an',
+    '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps}`,
     '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p',
-    '-b:v', '3000k', '-maxrate', '3000k', '-bufsize', '6000k', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
-    '-c:a', 'aac', '-b:a', '96k', '-ar', '44100', '-shortest',
+    '-crf', String(crf), '-maxrate', String(videoMaxBitsPerSecond), '-bufsize', String(videoBufferBits),
+    '-g', keyframes, '-keyint_min', keyframes, '-sc_threshold', '0',
     '-rw_timeout', '15000000', '-f', 'flv', '-flvflags', 'no_duration_filesize', target];
 }
 
@@ -28,7 +31,7 @@ export function createStreamingServer({ port = 8732, ffmpeg = Bun.which('ffmpeg'
   let publisher = null;
   const sockets = new Set();
   const authenticated = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value) && timingSafeEqual(Buffer.from(value), Buffer.from(token));
-  const metadata = () => ({ service: 'dartcams-stream', version: 1, token, configured: !!config.streamKey,
+  const metadata = () => ({ service: 'dartcams-stream', version: 1, profileId: STREAM_PROFILE.id, token, configured: !!config.streamKey,
     ffmpegAvailable: !!ffmpeg, active: !!publisher, viewerUrl: config.viewerUrl, rtmpUrl: config.rtmpUrl });
   const send = (ws, message) => { if (ws.readyState === 1) ws.send(JSON.stringify(message)); };
 
@@ -132,6 +135,7 @@ export function createStreamingServer({ port = 8732, ffmpeg = Bun.which('ffmpeg'
           try { message = JSON.parse(data); } catch { return stop(ws, 'Ungültige Nachricht.'); }
           if (!ws.data.authenticated) {
             if (message.type !== 'start' || !authenticated(message.token)) return stop(ws, 'Helfer erneut verbinden.');
+            if (message.profileId !== STREAM_PROFILE.id) return stop(ws, 'Dartcams bitte aktualisieren und die Seite neu laden, damit Webapp und Helfer dasselbe Streaming-Profil verwenden.');
             ws.data.authenticated = true;
             clearTimeout(ws.data.authTimer);
             start(ws);

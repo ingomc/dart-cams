@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { allowedOrigin, createStreamingServer, ffmpegArguments } from '../scripts/stream-helper.mjs';
 import { validateStreamDestination, validateStreamKey, recordingMimeType, DEFAULT_VIEWER_URL, DEFAULT_RTMP_URL } from '../src/lib/streaming/protocol.ts';
 import { LivestreamClient } from '../src/lib/streaming/client.ts';
+import { fitStreamFrame, streamSlateUrl } from '../src/lib/streaming/scenes.ts';
 
 const destination = { viewerUrl: DEFAULT_VIEWER_URL, rtmpUrl: DEFAULT_RTMP_URL };
 const origin = 'https://cams.ingomc.de';
@@ -136,5 +137,119 @@ describe('capture lifecycle', () => {
       else delete globalThis.navigator;
       globalThis.MediaRecorder = previousRecorder;
     }
+  });
+});
+
+describe('continuous broadcast scenes', () => {
+  function captureFixture() {
+    const saved = new Map(['navigator', 'MediaRecorder', 'WebSocket'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+    const recorders = [];
+    const sockets = [];
+    let stopped = 0;
+    const track = { getSettings: () => ({ displaySurface: 'browser' }), stop: () => stopped++, addEventListener() {} };
+    const source = { getTracks: () => [track], getVideoTracks: () => [track] };
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { mediaDevices: { getDisplayMedia: async () => source } } });
+    globalThis.MediaRecorder = class {
+      static isTypeSupported() { return true; }
+      constructor(media) { this.media = media; this.state = 'inactive'; this.stops = 0; recorders.push(this); }
+      start() { this.state = 'recording'; }
+      stop() { this.state = 'inactive'; this.stops++; }
+    };
+    globalThis.WebSocket = class {
+      static OPEN = 1;
+      constructor() { this.readyState = 1; this.bufferedAmount = 0; this.messages = []; sockets.push(this); }
+      send(data) { this.messages.push(data); }
+      close() { this.readyState = 3; }
+      receive(data) { this.onmessage?.({ data: JSON.stringify(data) }); }
+    };
+    return { source, recorders, sockets, get stopped() { return stopped; }, restore() {
+      for (const [key, descriptor] of saved) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else delete globalThis[key];
+      }
+    } };
+  }
+
+  test('start, live and pause share one output, recorder and connection; stop releases capture', async () => {
+    const fixture = captureFixture();
+    const broadcast = { id: 'composited-output' };
+    let selected;
+    let disposed = 0;
+    const client = new LivestreamClient(() => {}, (source, scene) => {
+      expect(source).toBe(fixture.source);
+      selected = scene;
+      return { start: async () => broadcast, setScene: scene => { selected = scene; }, dispose: () => disposed++ };
+    });
+    client.state.configured = true;
+    try {
+      await client.start();
+      expect(selected).toBe('start');
+      const socket = fixture.sockets[0];
+      socket.onopen();
+      socket.receive({ type: 'ready' });
+      socket.receive({ type: 'live' });
+      for (const scene of ['live', 'pause', 'start', 'live']) {
+        client.setScene(scene);
+        expect(selected).toBe(scene);
+        expect(client.state.scene).toBe(scene);
+        expect(client.state.phase).toBe('live');
+      }
+      expect(fixture.sockets).toHaveLength(1);
+      expect(fixture.recorders).toHaveLength(1);
+      expect(fixture.recorders[0].media).toBe(broadcast);
+      expect(fixture.recorders[0].stops).toBe(0);
+      expect(socket.messages).toHaveLength(1);
+      expect(fixture.stopped).toBe(0);
+      client.stop();
+      expect(fixture.stopped).toBe(1);
+      expect(disposed).toBe(1);
+      expect(fixture.recorders[0].stops).toBe(1);
+      expect(client.state.scene).toBe('start');
+    } finally { client.dispose(); fixture.restore(); }
+  });
+
+  test('missing holding cards abort before any publisher or recorder can expose the tab', async () => {
+    const fixture = captureFixture();
+    const client = new LivestreamClient(() => {}, () => ({
+      start: async () => { throw new Error('Sendebilder konnten nicht geladen werden.'); }, setScene() {}, dispose() {},
+    }));
+    client.state.configured = true;
+    client.setScene('pause');
+    try {
+      await client.start();
+      expect(client.state.phase).toBe('error');
+      expect(client.state.message).toContain('Sendebilder');
+      expect(fixture.stopped).toBe(1);
+      expect(fixture.sockets).toHaveLength(0);
+      expect(fixture.recorders).toHaveLength(0);
+    } finally { client.dispose(); fixture.restore(); }
+  });
+
+  test('cancel during image preparation cannot start a late stream', async () => {
+    const fixture = captureFixture();
+    let ready;
+    let preparing;
+    const prepared = new Promise(resolve => { preparing = resolve; });
+    const client = new LivestreamClient(() => {}, () => ({
+      start: () => { preparing(); return new Promise(resolve => { ready = resolve; }); }, setScene() {}, dispose() {},
+    }));
+    client.state.configured = true;
+    try {
+      const starting = client.start();
+      await prepared;
+      client.stop();
+      ready({ id: 'late-output' });
+      await starting;
+      expect(fixture.stopped).toBe(1);
+      expect(fixture.sockets).toHaveLength(0);
+      expect(client.state.phase).toBe('idle');
+    } finally { client.dispose(); fixture.restore(); }
+  });
+
+  test('holding assets respect a deployment base path and frames retain their full aspect ratio', () => {
+    expect(streamSlateUrl('pause', '/dart-cams')).toBe('/dart-cams/stream-slates/pause-v1.png');
+    expect(fitStreamFrame(1920, 1080)).toEqual({ x: 0, y: 0, width: 1280, height: 720 });
+    expect(fitStreamFrame(720, 1280)).toEqual({ x: 437.5, y: 0, width: 405, height: 720 });
+    expect(fitStreamFrame(0, 0)).toBeNull();
   });
 });

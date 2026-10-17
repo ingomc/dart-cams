@@ -42,4 +42,4 @@ ffmpeg -hide_banner -y -loop 1 -framerate 30 \
 
 Die Videospur dauert exakt acht Sekunden. Die Containerdauer kann durch AAC-Encoder-Verzögerung geringfügig länger ausfallen.
 
-Eine Umschaltung auf Pausenbilder innerhalb eines weiterlaufenden Dartcams-Streams ist ein separates Feature; die hier installierten Owncast-Offline-Bilder greifen, wenn kein Stream ankommt.
+Während eines laufenden Dartcams-Streams wechseln die Schalter **Start / Live / Pause** unten neben **Stop** zwischen den Sendebildern. Die eigene Kameraansicht bleibt dabei sichtbar. Siehe [Livestream-Anleitung](../LIVESTREAM.md). Die Owncast-Offline-Bilder greifen, wenn kein Stream ankommt.

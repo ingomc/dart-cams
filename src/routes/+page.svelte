@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from "svelte";
+	import { base } from '$app/paths';
 	import { sourceKey, restoreSources, type CameraSource } from '$lib/cameraSources';
 	import { restoreCameraSettings, ensureCameraProfiles, cameraSettingsFor, applyCameraSettings, type CameraLayout, type CameraSlot, type CameraSettingsApply } from '$lib/cameraLayoutSettings';
 	import { DartRectifyDiscovery, initialConnection, connectionLabels, connectionHelp, type BridgeConnection } from '$lib/dartrectify/connection';
@@ -8,7 +9,9 @@
 	let sourcesRestored = false;
 	import SettingsSection from "$lib/components/SettingsSection.svelte";
 	import LivestreamSettings from '$lib/components/LivestreamSettings.svelte';
+	import StreamSceneControls from '$lib/components/StreamSceneControls.svelte';
 	import { LivestreamClient } from '$lib/streaming/client';
+	import { StreamCompositor } from '$lib/streaming/compositor';
 	import { initialStreamState, isStreamActive } from '$lib/streaming/protocol';
 	let livestream: LivestreamClient | undefined;
 	let streamState = { ...initialStreamState };
@@ -362,7 +365,7 @@
 		livestream = new LivestreamClient(state => {
 			streamState = state;
 			if (state.phase === 'error') showStreamSettings();
-		});
+		}, (source, scene, onError) => new StreamCompositor(source, scene, onError, base));
 		window.addEventListener('pagehide', stopStream);
 		unsubscribeDiagnostics = cameraDiagnostics.subscribe(() => {
 			diagnosticCount = cameraDiagnostics.snapshot().length;
@@ -765,6 +768,9 @@
                 </span>
             </div>
             <div class="bar-buttons" role="group" aria-label="Verbindungen und Einstellungen">
+				{#if streamActive}
+					<StreamSceneControls compact scene={streamState.scene} onSelect={scene => livestream?.setScene(scene)} />
+				{/if}
                 <button type="button" class="ui-button ui-button--secondary bar-button stream-button"
                     class:streaming={streamActive} aria-label={streamActive ? 'Livestream stoppen' : 'Livestream einrichten'}
                     title={streamActive ? 'Livestream stoppen' : 'Livestream'}
@@ -773,7 +779,7 @@
                         {#if streamActive}<rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" />
                         {:else}<circle cx="12" cy="12" r="3" /><path d="M6.3 6.3a8 8 0 0 0 0 11.4M17.7 6.3a8 8 0 0 1 0 11.4M3.5 3.5a12 12 0 0 0 0 17M20.5 3.5a12 12 0 0 1 0 17" />{/if}
                     </svg>
-                    {streamState.phase === 'live' ? 'LIVE' : streamActive ? 'Verbinde…' : 'Stream'}
+                    {streamState.phase === 'live' ? 'Stop' : streamActive ? 'Abbrechen' : 'Stream'}
                 </button>
                 {#if bridge.status !== 'online'}
                     <button type="button" class="ui-button ui-button--secondary bar-button"

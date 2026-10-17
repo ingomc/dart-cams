@@ -1,6 +1,9 @@
 <script lang="ts">
+	import { base } from '$app/paths';
+	import StreamSceneControls from './StreamSceneControls.svelte';
 	import type { LivestreamClient } from '$lib/streaming/client';
 	import { isStreamActive, type StreamState } from '$lib/streaming/protocol';
+	import { streamSlateUrl } from '$lib/streaming/scenes';
 	export let client: LivestreamClient | undefined;
 	export let state: StreamState;
 	export let onStart: () => void;
@@ -9,7 +12,7 @@
 	let streamKey = '';
 	let copied = false;
 	$: active = isStreamActive(state.phase);
-	$: status = state.phase === 'live' ? 'Live auf Owncast' : state.phase === 'selecting' ? 'Dartcams-Tab auswählen…' :
+	$: status = state.phase === 'live' ? `Sendet ${state.scene === 'live' ? 'Kameras' : state.scene === 'start' ? 'Startbild' : 'Pausenbild'}` : state.phase === 'selecting' ? 'Dartcams-Tab auswählen…' :
 		state.phase === 'connecting' ? 'Stream verbindet…' : state.phase === 'error' ? 'Stream gestoppt' :
 		state.configured ? 'Bereit zum Streamen' : state.helperConnected ? 'Helfer verbunden' : 'Helfer nicht verbunden';
 	async function connect() {
@@ -52,6 +55,15 @@
 	{/if}
 	{#if state.message}<p class="stream-message" role="status">{state.message}</p>{/if}
 	{#if state.configured || active}
+		<div class="scene-selection">
+			<span class="ui-label">Sendebild</span>
+			<StreamSceneControls scene={state.scene} disabled={state.busy || !client} onSelect={scene => client?.setScene(scene)} />
+			{#if state.scene !== 'live'}
+				<img class="slate-preview" src={streamSlateUrl(state.scene, base)}
+					alt={state.scene === 'start' ? 'Startbild: Gleich geht’s los' : 'Pausenbild: Kurze Spielpause'} width="1672" height="941" />
+			{/if}
+			<p class="stream-hint">{active ? 'Deine Kameras bleiben sichtbar. Zuschauer sehen das gewählte Sendebild zeitversetzt.' : 'Der Stream beginnt mit dem gewählten Sendebild.'}</p>
+		</div>
 		{#if active}
 			<button class="ui-button ui-button--primary" type="button" on:click={() => client?.stop()}>Stream stoppen</button>
 		{:else}
@@ -67,6 +79,8 @@
 
 <style>
 	.stream-settings { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+	.scene-selection { display: flex; flex-direction: column; gap: 8px; }
+	.slate-preview { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: contain; border-radius: var(--radius-sm); background: var(--color-background); border: 1px solid var(--color-border); }
 	.stream-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 	form { display: flex; flex-direction: column; gap: 8px; }
 	form .ui-label:not(:first-child) { margin-top: 4px; }

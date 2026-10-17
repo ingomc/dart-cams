@@ -1,3 +1,5 @@
+import type { StreamScene } from './scenes';
+
 export const STREAM_HELPER_URL = 'http://127.0.0.1:8732';
 export const DEFAULT_VIEWER_URL = 'http://darts-owncast-5e7884-202-61-206-24.sslip.io/';
 export const DEFAULT_RTMP_URL = 'rtmp://darts-owncast-5e7884-202-61-206-24.sslip.io:1935/live';
@@ -6,6 +8,7 @@ export const MAX_STREAM_BUFFER = 8 * 1024 * 1024;
 export type StreamPhase = 'idle' | 'selecting' | 'connecting' | 'live' | 'error';
 export type StreamState = {
 	phase: StreamPhase;
+	scene: StreamScene;
 	helperConnected: boolean;
 	configured: boolean;
 	busy: boolean;
@@ -14,7 +17,7 @@ export type StreamState = {
 	rtmpUrl: string;
 };
 export const initialStreamState: StreamState = {
-	phase: 'idle', helperConnected: false, configured: false, busy: false, message: '',
+	phase: 'idle', scene: 'start', helperConnected: false, configured: false, busy: false, message: '',
 	viewerUrl: DEFAULT_VIEWER_URL, rtmpUrl: DEFAULT_RTMP_URL,
 };
 

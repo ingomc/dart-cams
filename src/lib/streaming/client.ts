@@ -1,19 +1,31 @@
 import { STREAM_HELPER_URL, MAX_STREAM_BUFFER, initialStreamState, isStreamActive, recordingMimeType, validateStreamDestination, type StreamState } from './protocol';
+import { StreamCompositor, type StreamOutput, type StreamOutputFactory } from './compositor';
+import type { StreamScene } from './scenes';
 
 export class LivestreamClient {
 	state = { ...initialStreamState };
 	private token = '';
 	private media: MediaStream | null = null;
+	private output: StreamOutput | null = null;
 	private recorder: MediaRecorder | null = null;
 	private socket: WebSocket | null = null;
 	private timeout: ReturnType<typeof setTimeout> | undefined;
 	private generation = 0;
 	private disposed = false;
 
-	constructor(private readonly onChange: (state: StreamState) => void) {}
+	constructor(private readonly onChange: (state: StreamState) => void,
+		private readonly createOutput: StreamOutputFactory = (source, scene, onError) => new StreamCompositor(source, scene, onError)) {}
 	private update(change: Partial<StreamState>) {
 		this.state = { ...this.state, ...change };
 		if (!this.disposed) this.onChange(this.state);
+	}
+
+	setScene(scene: StreamScene): void {
+		if (this.disposed || !['start', 'live', 'pause'].includes(scene)) return;
+		try {
+			this.output?.setScene(scene);
+			this.update({ scene });
+		} catch { this.stop('Sendebild konnte nicht gewechselt werden. Bitte den Stream erneut starten.'); }
 	}
 
 	async connect(): Promise<void> {
@@ -76,6 +88,7 @@ export class LivestreamClient {
 			return;
 		}
 		const generation = ++this.generation;
+		let preparingOutput = false;
 		this.update({ phase: 'selecting', message: '' });
 		try {
 			const captureOptions = {
@@ -93,6 +106,17 @@ export class LivestreamClient {
 			}
 			track.addEventListener('ended', () => { if (generation === this.generation) this.stop(); }, { once: true });
 			this.update({ phase: 'connecting' });
+			preparingOutput = true;
+			this.timeout = setTimeout(() => { if (generation === this.generation) this.stop('Sendebilder konnten nicht vorbereitet werden. Bitte erneut starten.'); }, 15_000);
+			const output = this.createOutput(media, this.state.scene, () => {
+				if (generation === this.generation) this.stop('Die Bildübertragung ist abgebrochen. Bitte den Stream erneut starten.');
+			});
+			this.output = output;
+			const broadcast = await output.start();
+			if (generation !== this.generation || this.disposed) { output.dispose(); return; }
+			output.setScene(this.state.scene);
+			preparingOutput = false;
+			clearTimeout(this.timeout);
 			const socket = new WebSocket(`${STREAM_HELPER_URL.replace('http:', 'ws:')}/v1/stream`);
 			this.socket = socket;
 			this.timeout = setTimeout(() => { if (generation === this.generation) this.stop('Stream-Start dauert zu lange. Helfer und Owncast prüfen.'); }, 30_000);
@@ -106,7 +130,7 @@ export class LivestreamClient {
 				if (data.type === 'ready') {
 					if (this.recorder) return;
 					try {
-						const recorder = new MediaRecorder(media, { mimeType, videoBitsPerSecond: 5_000_000 });
+						const recorder = new MediaRecorder(broadcast, { mimeType, videoBitsPerSecond: 5_000_000 });
 						this.recorder = recorder;
 						recorder.ondataavailable = chunk => {
 							if (generation !== this.generation || socket.readyState !== WebSocket.OPEN || !chunk.data.size) return;
@@ -126,7 +150,7 @@ export class LivestreamClient {
 			socket.onclose = () => { if (generation === this.generation) this.stop('Verbindung zum Streaming-Helfer unterbrochen.'); };
 		} catch (error) {
 			if (generation !== this.generation) return;
-			this.stop(error instanceof DOMException && error.name === 'NotAllowedError'
+			this.stop(preparingOutput ? error instanceof Error ? error.message : 'Sendebilder konnten nicht vorbereitet werden.' : error instanceof DOMException && error.name === 'NotAllowedError'
 				? 'Tab-Freigabe abgebrochen oder nicht erlaubt.' : 'Tab-Freigabe fehlgeschlagen. Bitte Chrome oder Edge verwenden und die Freigabe erlauben.');
 		}
 	}
@@ -141,6 +165,8 @@ export class LivestreamClient {
 			recorder.onerror = null;
 			if (recorder.state !== 'inactive') recorder.stop();
 		}
+		this.output?.dispose();
+		this.output = null;
 		this.media?.getTracks().forEach(track => track.stop());
 		this.media = null;
 		const socket = this.socket;
@@ -150,7 +176,7 @@ export class LivestreamClient {
 			if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'stop' }));
 			socket.close();
 		}
-		this.update({ phase: message ? 'error' : 'idle', message });
+		this.update({ phase: message ? 'error' : 'idle', scene: 'start', message });
 	}
 
 	dispose(): void { this.disposed = true; this.stop(); }
